@@ -9,6 +9,81 @@ class InkSoft_Sync_Manager {
     }
 
     /**
+     * Check if product has valid attributes (Styles with Names, Sizes, etc)
+     * This determines if product should be VARIABLE or SIMPLE
+     *
+     * @param array $product - Product data from InkSoft API
+     * @param array &$logs - Logs array to append debug info
+     * @return array - ['is_variable' => bool, 'reason' => string]
+     */
+    public function validate_product_attributes( $product, &$logs ) {
+        $logs[] = "[DEBUG] Validating product attributes for ID: " . ( $product['ID'] ?? 'unknown' );
+
+        // Check if Styles array exists and has items
+        if ( empty( $product['Styles'] ) || ! is_array( $product['Styles'] ) ) {
+            $logs[] = "[DEBUG] No Styles array found - SIMPLE product";
+            return array( 'is_variable' => false, 'reason' => 'No Styles array' );
+        }
+
+        $style_count = count( $product['Styles'] );
+        $logs[] = "[DEBUG] Found {$style_count} style(s)";
+
+        // A product needs at least 2 different styles to be variable
+        if ( $style_count < 2 ) {
+            $logs[] = "[DEBUG] Only 1 style - SIMPLE product";
+            return array( 'is_variable' => false, 'reason' => 'Only 1 style' );
+        }
+
+        // Validate that each style has a valid Name AND has Sizes
+        $valid_styles_with_sizes = 0;
+        $total_variations = 0;
+        
+        foreach ( $product['Styles'] as $idx => $style ) {
+            if ( ! is_array( $style ) || empty( $style['Name'] ) ) {
+                $logs[] = "[DEBUG] Style {$idx}: INVALID (missing Name) - skipping";
+                continue;
+            }
+
+            $style_name = $style['Name'];
+            $logs[] = "[DEBUG] Style {$idx}: '{$style_name}'";
+
+            // Check for sizes within this style
+            if ( empty( $style['Sizes'] ) || ! is_array( $style['Sizes'] ) ) {
+                $logs[] = "[DEBUG]   └─ INVALID: No Sizes array";
+                continue;
+            }
+
+            $size_count = count( $style['Sizes'] );
+            $logs[] = "[DEBUG]   └─ Has {$size_count} size(s)";
+
+            // Validate sizes have Names
+            $valid_sizes = 0;
+            foreach ( $style['Sizes'] as $size ) {
+                if ( is_array( $size ) && ! empty( $size['Name'] ) ) {
+                    $valid_sizes++;
+                }
+            }
+
+            if ( $valid_sizes > 0 ) {
+                $valid_styles_with_sizes++;
+                $total_variations += $valid_sizes;
+                $logs[] = "[DEBUG]   └─ {$valid_sizes} valid size(s) - will create {$valid_sizes} variation(s)";
+            } else {
+                $logs[] = "[DEBUG]   └─ INVALID: No valid sizes with Names";
+            }
+        }
+
+        // Product is VARIABLE if it has 2+ valid styles with sizes
+        if ( $valid_styles_with_sizes < 2 ) {
+            $logs[] = "[DEBUG] Only {$valid_styles_with_sizes} valid style(s) with sizes - SIMPLE product";
+            return array( 'is_variable' => false, 'reason' => "Only {$valid_styles_with_sizes} valid style(s)" );
+        }
+
+        $logs[] = "[DEBUG] Product has {$valid_styles_with_sizes} valid styles with total {$total_variations} size variations - VARIABLE product";
+        return array( 'is_variable' => true, 'reason' => "{$valid_styles_with_sizes} styles x sizes = {$total_variations} variations" );
+    }
+
+    /**
      * Sync all configured stores
      * Called by cron job or manual trigger
      */
@@ -97,11 +172,20 @@ class InkSoft_Sync_Manager {
         $processed = 0;
 
         foreach ( $products as $p ) {
-            $sku = trim( $p['Sku'] ?? ( $p['ID'] ?? '' ) );
-            if ( empty( $sku ) ) {
-                $sku = 'inksoft-' . ($p['ID'] ?? rand(100000,999999));
+            // Get detailed product info including pricing and sizes
+            $logs[] = "[DEBUG] Fetching detailed product data for ID: " . $p['ID'];
+            $detail_result = $api->get_product_detail( $p['ID'] );
+            
+            if ( ! $detail_result['success'] ) {
+                $logs[] = "[WARNING] Could not fetch detailed product info for ID: " . $p['ID'];
+                continue;
             }
-
+            
+            $p = $detail_result['product']; // Use detailed product data
+            
+            // Get SKU - use original format to avoid duplicates on re-sync
+            $sku = $p['Sku'] ?? $p['SKU'] ?? ('inksoft-' . $p['ID']);
+            
             $existing_id = wc_get_product_id_by_sku( $sku );
 
             // Get price: try Styles[0].Price first, then UnitPrice, then UnitCost, default to 0
@@ -165,11 +249,28 @@ class InkSoft_Sync_Manager {
                 $logs[] = "[ERROR] Failed to set price: " . $e->getMessage();
             }
             
-            // Set product type to 'simple'
+            // Validate product attributes and set correct product type
             try {
-                update_post_meta( $product_id, '_product_type', 'simple' );
+                // Check if product has valid attributes for variable product
+                $attr_validation = $this->validate_product_attributes( $p, $logs );
+                $is_variable = $attr_validation['is_variable'];
+                $validation_reason = $attr_validation['reason'];
+                
+                if ( $is_variable ) {
+                    $logs[] = "[DEBUG] Product classified as VARIABLE ({$validation_reason})";
+                    // Set product type to variable using meta
+                    update_post_meta( $product_id, '_product_type', 'variable' );
+                    $logs[] = "[DEBUG] Product type set to: variable";
+                    // Create variations for each style+size combination
+                    $this->create_product_variations( $product_id, $p, $price, $logs );
+                } else {
+                    $logs[] = "[DEBUG] Product classified as SIMPLE ({$validation_reason})";
+                    // Set as simple product
+                    update_post_meta( $product_id, '_product_type', 'simple' );
+                    $logs[] = "[DEBUG] Product type set to: simple";
+                }
             } catch ( Exception $e ) {
-                $logs[] = "[ERROR] Failed to set product type: " . $e->getMessage();
+                $logs[] = "[ERROR] Failed to validate/set product type: " . $e->getMessage();
             }
             
             // Set stock status to instock
@@ -243,22 +344,23 @@ class InkSoft_Sync_Manager {
                 foreach ( $p['Styles'][0]['Sides'] as $idx => $side ) {
                     if ( ! empty( $side['ImageFilePath'] ) ) {
                         $image_path = $side['ImageFilePath'];
-                        $image_url = rtrim( $base, '/' ) . '/' . ltrim( $image_path, '/' );
-                        $logs[] = "[DEBUG] Downloading image {$idx}: {$side['Side']}";
+                        // Image paths are absolute paths on stores.inksoft.com, NOT relative to store
+                        $image_url = 'https://stores.inksoft.com' . $image_path;
+                        $logs[] = "[DEBUG] Downloading image {$idx}: {$side['Side']} from {$image_url}";
                         
                         $image_id = $this->maybe_set_featured_image( $product_id, $image_url, $image_replace );
                         if ( $image_id ) {
                             $image_ids[] = $image_id;
                             $logs[] = "[DEBUG] Image {$idx} saved with ID={$image_id}";
                         } else {
-                            $logs[] = "[ERROR] Failed to download image {$idx}";
+                            $logs[] = "[ERROR] Failed to download image {$idx}: {$image_url}";
                         }
                     }
                 }
             } elseif ( ! empty( $p['Styles'][0]['ImageFilePath'] ) ) {
                 // Fallback: use single image if no sides array
                 $image_path = $p['Styles'][0]['ImageFilePath'];
-                $image_url = rtrim( $base, '/' ) . '/' . ltrim( $image_path, '/' );
+                $image_url = 'https://stores.inksoft.com' . $image_path;
                 $logs[] = "[DEBUG] Using fallback single image from Styles[0]";
                 
                 $image_id = $this->maybe_set_featured_image( $product_id, $image_url, $image_replace );
@@ -276,6 +378,30 @@ class InkSoft_Sync_Manager {
                 $logs[] = "[DEBUG] Set gallery with " . (count($image_ids) - 1) . " additional images";
             } elseif ( count( $image_ids ) === 1 ) {
                 $logs[] = "[DEBUG] Single image set as featured only";
+            }
+
+            // VERIFICATION: Check product type after creation
+            try {
+                $product_type_check = get_post_meta( $product_id, '_product_type', true );
+                $variation_count = count( get_children( array( 'post_parent' => $product_id, 'post_type' => 'product_variation' ) ) );
+                
+                // Force a fresh WooCommerce product instance from the factory
+                // This will read the updated _product_type meta and create the correct object class
+                wp_cache_delete( $product_id, 'post' );
+                clean_post_cache( $product_id );
+                
+                // Use WooCommerce's product factory to create a fresh instance
+                if ( class_exists( 'WC_Product_Factory' ) ) {
+                    $factory = new WC_Product_Factory();
+                    $product_obj = $factory->get_product( $product_id );
+                } else {
+                    $product_obj = wc_get_product( $product_id );
+                }
+                $wc_type = $product_obj ? $product_obj->get_type() : 'unknown';
+                
+                $logs[] = "[VERIFY] Product ID={$product_id} | Meta Type='{$product_type_check}' | WC Type='{$wc_type}' | Variations={$variation_count}";
+            } catch ( Exception $e ) {
+                $logs[] = "[DEBUG] Verification check: " . $e->getMessage();
             }
 
             // Track imported SKUs per store
@@ -322,8 +448,13 @@ class InkSoft_Sync_Manager {
             return false;
         }
 
+        // Get original filename without query params for proper MIME detection
+        $parsed_url = parse_url( $image_url );
+        $path = $parsed_url['path'];
+        $filename = basename( $path );
+        
         $file_array = array();
-        $file_array['name'] = basename( $image_url );
+        $file_array['name'] = $filename;
         $file_array['tmp_name'] = $tmp;
 
         $id = media_handle_sideload( $file_array, $post_id );
@@ -403,5 +534,210 @@ class InkSoft_Sync_Manager {
 
         // Update the imported SKUs list
         update_option( $opt, $imported_skus );
+    }
+    
+    /**
+     * Ensure attribute exists in WooCommerce
+     */
+    protected function ensure_attribute( $attribute_slug ) {
+        global $wpdb;
+        
+        $attr = wc_get_attribute( $attribute_slug );
+        if ( $attr ) {
+            return $attr->get_id();
+        }
+        
+        // Create attribute if doesn't exist
+        $attribute_id = wc_create_attribute( array(
+            'name' => ucfirst( str_replace( 'pa_', '', $attribute_slug ) ),
+            'slug' => $attribute_slug,
+            'type' => 'select',
+            'orderby' => 'menu_order',
+            'has_archives' => true,
+        ) );
+        
+        return $attribute_id;
+    }
+    
+    /**
+     * Create product variations for variable products
+     * Now uses dynamic attribute mapping - handles ANY structure!
+     */
+    protected function create_product_variations( $parent_id, $product, $base_price, &$logs ) {
+        // Load attribute mapper
+        if ( ! class_exists( 'InkSoft_Attribute_Mapper' ) ) {
+            require_once dirname( __FILE__ ) . '/class-attribute-mapper.php';
+        }
+
+        // Get enabled attributes
+        $attribute_config = InkSoft_Attribute_Mapper::get_attribute_config();
+        
+        if ( empty( $attribute_config ) ) {
+            $logs[] = "[ERROR] No attributes configured for variations";
+            return;
+        }
+
+        $logs[] = "[DEBUG] Creating variations with " . count( $attribute_config ) . " attributes";
+
+        // Ensure all attributes exist in WooCommerce
+        InkSoft_Attribute_Mapper::ensure_attributes();
+
+        // Extract values for each attribute
+        $attribute_values = array();
+        $attribute_keys = array();
+        $parent_attributes = array(); // For assigning to parent product
+
+        foreach ( $attribute_config as $attr_key => $attr_data ) {
+            $inksoft_path = $attr_data['inksoft_path'] ?? '';
+            
+            if ( empty( $inksoft_path ) ) {
+                continue;
+            }
+
+            $values = InkSoft_Attribute_Mapper::extract_attribute_values( $product, $inksoft_path );
+            
+            if ( ! empty( $values ) ) {
+                $attribute_values[] = $values;
+                $attribute_keys[] = $attr_key;
+                
+                // Build parent attribute data
+                $attr_slug = $attr_data['attribute_slug'] ?? '';
+                $attr_label = $attr_data['attribute_label'] ?? ucfirst( $attr_key );
+                $attr_terms = array();
+                
+                foreach ( $values as $value_item ) {
+                    if ( is_array( $value_item ) && ! empty( $value_item['Name'] ) ) {
+                        $attr_terms[] = sanitize_title( $value_item['Name'] );
+                    }
+                }
+                
+                if ( ! empty( $attr_slug ) && ! empty( $attr_terms ) ) {
+                    $parent_attributes[ $attr_slug ] = array(
+                        'label' => $attr_label,
+                        'terms' => $attr_terms,
+                    );
+                }
+                
+                $logs[] = "[DEBUG] Attribute '{$attr_key}': " . count( $values ) . " values";
+            }
+        }
+
+        if ( empty( $attribute_values ) ) {
+            $logs[] = "[WARNING] Could not extract attribute values from product";
+            return;
+        }
+
+        // CRITICAL: Assign attributes to parent product before creating variations
+        $logs[] = "[DEBUG] Assigning " . count( $parent_attributes ) . " attributes to parent product";
+        try {
+            // Get existing product attributes meta
+            $product_attributes = get_post_meta( $parent_id, '_product_attributes', true );
+            if ( ! is_array( $product_attributes ) ) {
+                $product_attributes = array();
+            }
+            
+            // Get global attribute taxonomy for each attribute
+            foreach ( $parent_attributes as $attr_slug => $attr_data ) {
+                $attr_terms = $attr_data['terms'] ?? array();
+                
+                if ( empty( $attr_terms ) ) {
+                    continue;
+                }
+                
+                // Create/get term IDs for each attribute value
+                $term_ids = array();
+                foreach ( $attr_terms as $term_name ) {
+                    // Get or create term
+                    $term_result = wp_insert_term( $term_name, $attr_slug, array( 'slug' => $term_name ) );
+                    
+                    if ( is_wp_error( $term_result ) ) {
+                        // Term might already exist
+                        $term_obj = get_term_by( 'slug', $term_name, $attr_slug );
+                        if ( $term_obj ) {
+                            $term_ids[] = $term_obj->term_id;
+                        }
+                    } else {
+                        $term_ids[] = $term_result['term_id'];
+                    }
+                }
+                
+                // Register in _product_attributes (WooCommerce's canonical location)
+                if ( ! empty( $term_ids ) ) {
+                    $product_attributes[ $attr_slug ] = array(
+                        'name'       => $attr_slug,
+                        'value'      => implode( ' | ', $attr_terms ),
+                        'position'   => 0,
+                        'is_visible' => 1,
+                        'is_variation' => 1,
+                        'is_taxonomy' => 1,
+                    );
+                    $logs[] = "[DEBUG] Set attribute '{$attr_slug}' with " . count( $term_ids ) . " terms";
+                }
+            }
+            
+            // Save the product attributes to post meta
+            if ( ! empty( $product_attributes ) ) {
+                update_post_meta( $parent_id, '_product_attributes', $product_attributes );
+            }
+            
+            $logs[] = "[SUCCESS] Parent product attributes configured";
+        } catch ( Exception $e ) {
+            $logs[] = "[ERROR] Failed to assign attributes to parent: " . $e->getMessage();
+        }
+
+        // Generate all combinations
+        $combinations = InkSoft_Attribute_Mapper::generate_combinations( ...$attribute_values );
+        $logs[] = "[DEBUG] Generated " . count( $combinations ) . " variation combinations";
+
+        if ( empty( $combinations ) ) {
+            $logs[] = "[WARNING] No variation combinations generated";
+            return;
+        }
+
+        // Create variations
+        $variation_ids = array();
+        $base_sku = $product['Sku'] ?? $product['SKU'] ?? 'inksoft-' . $product['ID'];
+
+        foreach ( $combinations as $combination ) {
+            // Generate variation data
+            $variation_sku = InkSoft_Attribute_Mapper::generate_variation_sku( $base_sku, $combination );
+            $variation_title = InkSoft_Attribute_Mapper::generate_variation_title( $product['Name'], $combination );
+            $variation_price = InkSoft_Attribute_Mapper::get_variation_price( $combination, $base_price );
+            $attribute_meta = InkSoft_Attribute_Mapper::build_attribute_meta( $combination, $attribute_config );
+
+            // Create variation post
+            $variation_data = array(
+                'post_parent' => $parent_id,
+                'post_type' => 'product_variation',
+                'post_status' => 'publish',
+                'post_title' => $variation_title,
+            );
+
+            $variation_id = wp_insert_post( $variation_data );
+
+            if ( $variation_id && ! is_wp_error( $variation_id ) ) {
+                // Set meta
+                update_post_meta( $variation_id, '_sku', $variation_sku );
+                update_post_meta( $variation_id, '_price', wc_format_decimal( $variation_price ) );
+                update_post_meta( $variation_id, '_regular_price', wc_format_decimal( $variation_price ) );
+                update_post_meta( $variation_id, '_stock_status', 'instock' );
+                update_post_meta( $variation_id, '_stock', 999 );
+
+                // Set attributes
+                foreach ( $attribute_meta as $attr_slug => $attr_value ) {
+                    update_post_meta( $variation_id, $attr_slug, $attr_value );
+                }
+
+                $variation_ids[] = $variation_id;
+            } else {
+                $logs[] = "[ERROR] Failed to create variation: {$variation_title}";
+            }
+        }
+
+        // Set variation IDs on parent
+        if ( ! empty( $variation_ids ) ) {
+            update_post_meta( $parent_id, '_children', $variation_ids );
+            $logs[] = "[SUCCESS] Created " . count( $variation_ids ) . " variations";
+        }
     }
 }

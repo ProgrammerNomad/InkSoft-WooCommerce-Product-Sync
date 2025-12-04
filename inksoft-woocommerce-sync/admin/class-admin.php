@@ -90,11 +90,72 @@ class InkSoft_Woo_Sync_Admin {
                 <?php submit_button(); ?>
             </form>
 
+            <hr />
+            <h2><?php esc_html_e( 'Attribute Mapping', 'inksoft-woo-sync' ); ?></h2>
+            <p><?php esc_html_e( 'Configure how InkSoft product structures map to WooCommerce attributes. This allows flexible handling of colors, sizes, materials, or any custom attributes from your InkSoft products.', 'inksoft-woo-sync' ); ?></p>
+            
+            <?php $this->render_attribute_mapping(); ?>
+
+            <hr />
             <h2><?php esc_html_e( 'Manual Sync', 'inksoft-woo-sync' ); ?></h2>
             <p><button id="inksoft-start-sync" class="button button-primary"><?php esc_html_e( 'Start Sync (AJAX)', 'inksoft-woo-sync' ); ?></button></p>
 
             <div id="inksoft-sync-log" style="background:#fff;padding:12px;border:1px solid #ddd;max-height:400px;overflow:auto;font-family:monospace;white-space:pre-wrap;"></div>
         </div>
+        <?php
+    }
+
+    /**
+     * Render attribute mapping configuration UI
+     */
+    public function render_attribute_mapping() {
+        if ( ! class_exists( 'InkSoft_Attribute_Mapper' ) ) {
+            require_once dirname( __FILE__ ) . '/../includes/class-attribute-mapper.php';
+        }
+
+        $config = InkSoft_Attribute_Mapper::get_attribute_config();
+        ?>
+        <table class="widefat striped">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e( 'Attribute', 'inksoft-woo-sync' ); ?></th>
+                    <th><?php esc_html_e( 'InkSoft Path', 'inksoft-woo-sync' ); ?></th>
+                    <th><?php esc_html_e( 'WooCommerce Attribute', 'inksoft-woo-sync' ); ?></th>
+                    <th><?php esc_html_e( 'Label', 'inksoft-woo-sync' ); ?></th>
+                    <th><?php esc_html_e( 'Enabled', 'inksoft-woo-sync' ); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ( $config as $key => $attr ) : ?>
+                <tr>
+                    <td><strong><?php echo esc_html( $key ); ?></strong></td>
+                    <td><?php echo esc_html( $attr['inksoft_path'] ); ?></td>
+                    <td><?php echo esc_html( $attr['attribute_slug'] ); ?></td>
+                    <td><?php echo esc_html( $attr['attribute_label'] ); ?></td>
+                    <td><?php echo $attr['enabled'] ? '✓' : '✗'; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <p style="margin-top: 15px;">
+            <em><?php esc_html_e( 'To modify these settings, edit your WordPress settings or use the filter: apply_filters( "inksoft_attribute_config", ... )', 'inksoft-woo-sync' ); ?></em>
+        </p>
+
+        <details style="margin-top: 15px;">
+            <summary><?php esc_html_e( 'Advanced: How to customize attribute mapping (developers)', 'inksoft-woo-sync' ); ?></summary>
+            <p><?php esc_html_e( 'Add this to your wp-config.php or functions.php to customize:', 'inksoft-woo-sync' ); ?></p>
+            <pre style="background:#f5f5f5;padding:10px;border:1px solid #ddd;">add_filter( 'inksoft_attribute_config', function( $config ) {
+    // Add a new attribute for materials
+    $config['material'] = array(
+        'inksoft_path'    => 'Materials',
+        'attribute_slug'  => 'pa_material',
+        'attribute_label' => 'Material',
+        'enabled'         => true,
+    );
+    return $config;
+} );</pre>
+        </details>
         <?php
     }
 }

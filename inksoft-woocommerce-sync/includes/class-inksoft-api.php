@@ -145,4 +145,29 @@ class INKSOFT_API {
     public function get_store_data() {
         return $this->request('GetStoreData');
     }
+    
+    /**
+     * Get detailed product with pricing and sizes
+     * Returns product with all styles, sizes, and pricing information
+     */
+    public function get_product_detail($product_id) {
+        $result = $this->request('GetProduct', array(
+            'ProductId' => $product_id,
+            'IncludePricing' => 'true',
+            'IncludeQuantityPacks' => 'true',
+            'IncludeCategories' => 'true',
+        ));
+        
+        if (!$result['success']) {
+            return array(
+                'success' => false,
+                'error' => $result['error'] ?? 'Unknown error',
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'product' => $result['data'],
+        );
+    }
 }
