@@ -31,3 +31,4 @@ wp-content/themes/*/
 
 # Archive (development reference only)
 archive/
+sync-to-wordpress.ps1

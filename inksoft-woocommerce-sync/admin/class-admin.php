@@ -98,5 +98,3 @@ class InkSoft_Woo_Sync_Admin {
         <?php
     }
 }
-
-new InkSoft_Woo_Sync_Admin();
