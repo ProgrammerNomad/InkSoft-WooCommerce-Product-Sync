@@ -1,0 +1,33 @@
+# PHP/IDE
+.DS_Store
+.vscode/
+*.swp
+*.swo
+*~
+.idea/
+
+# Composer
+vendor/
+composer.lock
+
+# npm/node
+node_modules/
+package-lock.json
+yarn.lock
+
+# Test/temporary files
+*.log
+*.tmp
+*.bak
+
+# Local config (if any)
+config.local.php
+.env.local
+
+# WordPress
+wp-config.php
+wp-content/plugins/*/
+wp-content/themes/*/
+
+# Archive (development reference only)
+archive/
