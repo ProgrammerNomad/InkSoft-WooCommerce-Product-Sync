@@ -569,7 +569,7 @@ class InkSoft_Sync_Manager {
      * Clear all WooCommerce product caches
      * This forces WooCommerce to re-instantiate the product object with the correct type
      */
-    protected function clear_product_cache( $product_id, &$logs ) {
+    public function clear_product_cache( $product_id, &$logs ) {
         // Clear WordPress post cache
         wp_cache_delete( $product_id, 'post' );
         wp_cache_delete( $product_id, 'posts' );
@@ -596,7 +596,7 @@ class InkSoft_Sync_Manager {
      * Create product variations for variable products
      * Now uses dynamic attribute mapping - handles ANY structure!
      */
-    protected function create_product_variations( $parent_id, $product, $base_price, &$logs ) {
+    public function create_product_variations( $parent_id, $product, $base_price, &$logs ) {
         // Load attribute mapper
         if ( ! class_exists( 'InkSoft_Attribute_Mapper' ) ) {
             require_once dirname( __FILE__ ) . '/class-attribute-mapper.php';

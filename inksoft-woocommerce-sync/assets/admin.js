@@ -24,43 +24,81 @@
                 return;
             }
 
-            // process stores sequentially
-            var pageSize = InkSoftWoo.settings.page_size || 100;
+            var totalProcessed = 0;
+            var totalProducts = 0;
+
             function processStore(i){
                 if (i >= stores.length){
-                    log('All stores processed');
+                    log('All stores processed. Total products: ' + totalProcessed);
                     btn.prop('disabled', false).text('Start Sync (AJAX)');
                     return;
                 }
                 var store = stores[i];
                 log('Starting store: ' + store);
-                processPage(store, 0, function(){
-                    log('Finished store: ' + store);
+                log('Fetching product list...');
+                
+                $.post(InkSoftWoo.ajax_url, { 
+                    action: 'inksoft_woo_get_product_list', 
+                    nonce: InkSoftWoo.nonce, 
+                    store: store 
+                }, function(resp){
+                    if (!resp.success){
+                        log('Failed to fetch product list: ' + (resp.data || 'Unknown error'));
+                        processStore(i+1);
+                        return;
+                    }
+
+                    var products = resp.data.products || [];
+                    totalProducts = resp.data.total || products.length;
+                    log('Found ' + totalProducts + ' products in store ' + store);
+
+                    if (products.length === 0){
+                        log('No products to sync in store ' + store);
+                        processStore(i+1);
+                        return;
+                    }
+
+                    processProducts(store, products, 0, function(){
+                        log('Finished store: ' + store);
+                        processStore(i+1);
+                    });
+                }).fail(function(xhr){
+                    log('Failed to fetch product list: ' + xhr.statusText);
                     processStore(i+1);
                 });
             }
 
-            function processPage(store, page, cb){
-                log('Processing ' + store + ' page ' + page);
-                $.post(InkSoftWoo.ajax_url, { action: 'inksoft_woo_sync_process_chunk', nonce: InkSoftWoo.nonce, store: store, page: page, page_size: pageSize }, function(res){
-                    if (!res.success){
-                        log('Error: ' + JSON.stringify(res));
-                        cb();
-                        return;
-                    }
-                    var data = res;
-                    if (data.logs && data.logs.length){
-                        data.logs.forEach(function(l){ log(l); });
-                    }
-                    if (data.nextPage !== null && data.nextPage !== undefined){
-                        // continue to next page
-                        setTimeout(function(){ processPage(store, data.nextPage, cb); }, 200);
-                    } else {
-                        cb();
-                    }
-                }).fail(function(xhr){
-                    log('AJAX error: ' + xhr.statusText);
+            function processProducts(store, products, index, cb){
+                if (index >= products.length){
                     cb();
+                    return;
+                }
+
+                var product = products[index];
+                var progress = (index + 1) + '/' + products.length;
+                log('[' + progress + '] Syncing product: ' + product.name + ' (ID: ' + product.id + ')');
+
+                $.post(InkSoftWoo.ajax_url, {
+                    action: 'inksoft_woo_sync_single_product',
+                    nonce: InkSoftWoo.nonce,
+                    store: store,
+                    product_id: product.id
+                }, function(resp){
+                    if (resp.success){
+                        var logs = resp.data.logs || [];
+                        logs.forEach(function(l){ log('  ' + l); });
+                        log('[' + progress + '] Success: ' + product.name);
+                        totalProcessed++;
+                    } else {
+                        log('[' + progress + '] Failed: ' + product.name + ' - ' + (resp.data.message || 'Unknown error'));
+                        if (resp.data.logs){
+                            resp.data.logs.forEach(function(l){ log('  ' + l); });
+                        }
+                    }
+                    setTimeout(function(){ processProducts(store, products, index + 1, cb); }, 100);
+                }).fail(function(xhr){
+                    log('[' + progress + '] AJAX error for ' + product.name + ': ' + xhr.statusText);
+                    setTimeout(function(){ processProducts(store, products, index + 1, cb); }, 100);
                 });
             }
 
