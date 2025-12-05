@@ -172,6 +172,8 @@ class InkSoft_Sync_Manager {
         $processed = 0;
 
         foreach ( $products as $p ) {
+            $logs[] = "[DEBUG] Processing product ID: " . $p['ID'];
+
             // Get detailed product info including pricing and sizes
             $logs[] = "[DEBUG] Fetching detailed product data for ID: " . $p['ID'];
             $detail_result = $api->get_product_detail( $p['ID'] );
@@ -260,6 +262,8 @@ class InkSoft_Sync_Manager {
                     $logs[] = "[DEBUG] Product classified as VARIABLE ({$validation_reason})";
                     // Set product type to variable using meta
                     update_post_meta( $product_id, '_product_type', 'variable' );
+                    // Clear ALL product caches to force WooCommerce to re-read the type
+                    $this->clear_product_cache( $product_id, $logs );
                     $logs[] = "[DEBUG] Product type set to: variable";
                     // Create variations for each style+size combination
                     $this->create_product_variations( $product_id, $p, $price, $logs );
@@ -267,6 +271,8 @@ class InkSoft_Sync_Manager {
                     $logs[] = "[DEBUG] Product classified as SIMPLE ({$validation_reason})";
                     // Set as simple product
                     update_post_meta( $product_id, '_product_type', 'simple' );
+                    // Clear ALL product caches
+                    $this->clear_product_cache( $product_id, $logs );
                     $logs[] = "[DEBUG] Product type set to: simple";
                 }
             } catch ( Exception $e ) {
@@ -560,6 +566,33 @@ class InkSoft_Sync_Manager {
     }
     
     /**
+     * Clear all WooCommerce product caches
+     * This forces WooCommerce to re-instantiate the product object with the correct type
+     */
+    protected function clear_product_cache( $product_id, &$logs ) {
+        // Clear WordPress post cache
+        wp_cache_delete( $product_id, 'post' );
+        wp_cache_delete( $product_id, 'posts' );
+        clean_post_cache( $product_id );
+        
+        // Clear WooCommerce product transients
+        if ( function_exists( 'wc_delete_product_transients' ) ) {
+            wc_delete_product_transients( $product_id );
+        }
+        
+        // Force WooCommerce factory to clear its internal cache
+        if ( class_exists( 'WC_Product_Factory' ) && function_exists( 'WC' ) ) {
+            $factory = WC()->product_factory;
+            // Clear the internal products cache
+            if ( property_exists( $factory, 'products' ) ) {
+                unset( $factory->products[ $product_id ] );
+            }
+        }
+        
+        $logs[] = "[DEBUG] Cleared all caches for product {$product_id}";
+    }
+
+    /**
      * Create product variations for variable products
      * Now uses dynamic attribute mapping - handles ANY structure!
      */
@@ -644,38 +677,132 @@ class InkSoft_Sync_Manager {
                     continue;
                 }
                 
-                // Create/get term IDs for each attribute value
+                // Check if this attribute already exists in WooCommerce
+                global $wpdb;
+                $attr_name = str_replace( 'pa_', '', $attr_slug );
+                $existing_attr = $wpdb->get_row( $wpdb->prepare(
+                    "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
+                    $attr_name
+                ) );
+                $attribute_id = $existing_attr ? (int) $existing_attr->attribute_id : 0;
+                
+                if ( ! $existing_attr ) {
+                    // Attribute doesn't exist, create it
+                    $wpdb->insert(
+                        "{$wpdb->prefix}woocommerce_attribute_taxonomies",
+                        array(
+                            'attribute_name'    => $attr_name,
+                            'attribute_label'   => ucwords( str_replace( '-', ' ', $attr_name ) ),
+                            'attribute_type'    => 'select',
+                            'attribute_orderby' => 'menu_order',
+                            'attribute_public'  => 1,
+                        ),
+                        array( '%s', '%s', '%s', '%s', '%d' )
+                    );
+                    $logs[] = "[DEBUG] Created new global product attribute: {$attr_slug}";
+                    $attribute_id = (int) $wpdb->insert_id;
+                } else {
+                    $logs[] = "[DEBUG] Using existing global product attribute: {$attr_slug}";
+                }
+                
+                // Create/get term IDs and slugs for each attribute value
                 $term_ids = array();
+                $term_slugs = array();
                 foreach ( $attr_terms as $term_name ) {
+                    // Create sanitized slug
+                    $slug = sanitize_title( $term_name );
+                    
                     // Get or create term
-                    $term_result = wp_insert_term( $term_name, $attr_slug, array( 'slug' => $term_name ) );
+                    $term_result = wp_insert_term( $term_name, $attr_slug, array( 'slug' => $slug ) );
                     
                     if ( is_wp_error( $term_result ) ) {
                         // Term might already exist
-                        $term_obj = get_term_by( 'slug', $term_name, $attr_slug );
+                        $term_obj = get_term_by( 'slug', $slug, $attr_slug );
                         if ( $term_obj ) {
                             $term_ids[] = $term_obj->term_id;
+                            $term_slugs[] = $term_obj->slug;
                         }
                     } else {
                         $term_ids[] = $term_result['term_id'];
+                        $term_slugs[] = $slug;
                     }
                 }
                 
                 // Register in _product_attributes (WooCommerce's canonical location)
                 if ( ! empty( $term_ids ) ) {
                     $product_attributes[ $attr_slug ] = array(
+                        'id'         => $attribute_id,
                         'name'       => $attr_slug,
-                        'value'      => implode( ' | ', $attr_terms ),
+                        'value'      => '',
                         'position'   => 0,
                         'is_visible' => 1,
                         'is_variation' => 1,
                         'is_taxonomy' => 1,
+                        'options'    => array_map( 'absint', $term_ids ),
                     );
-                    $logs[] = "[DEBUG] Set attribute '{$attr_slug}' with " . count( $term_ids ) . " terms";
+                    // Also store term IDs mapping separately for later use
+                    update_post_meta( $parent_id, $attr_slug . '_ids', implode( '|', $term_ids ) );
+                    update_post_meta( $parent_id, $attr_slug, implode( '|', $term_slugs ) );
+                    // Assign terms to the parent product so WooCommerce admin shows them selected
+                    wp_set_object_terms( $parent_id, $term_ids, $attr_slug, false );
+                    $logs[] = "[DEBUG] Set attribute '{$attr_slug}' with " . count( $term_ids ) . " terms (Slugs: " . implode( ',', $term_slugs ) . ", IDs: " . implode( ',', $term_ids ) . ")";
                 }
             }
             
-            // Save the product attributes to post meta
+            // Force WooCommerce to recognize this as a variable product
+            // by instantiating it as WC_Product_Variable and setting attributes
+            if ( class_exists( 'WC_Product_Variable' ) ) {
+                try {
+                    $product_variable = new WC_Product_Variable( $parent_id );
+                    
+                    // Convert product_attributes format to WooCommerce attribute objects
+                    $wc_attributes = array();
+                    foreach ( $product_attributes as $attr_slug => $attr_data ) {
+                        $attr_obj = new WC_Product_Attribute();
+                        $attr_obj->set_name( $attr_slug );
+                        
+                        // Get term IDs from the stored IDs meta
+                        $ids_meta = get_post_meta( $parent_id, $attr_slug . '_ids', true );
+                        if ( ! empty( $ids_meta ) ) {
+                            // Term IDs were stored in meta, use them directly
+                            $term_ids = array_map( 'absint', array_filter( explode( '|', $ids_meta ) ) );
+                        } elseif ( ! empty( $attr_data['options'] ) && is_array( $attr_data['options'] ) ) {
+                            $term_ids = array_map( 'absint', $attr_data['options'] );
+                        } else {
+                            // Fallback: look up term IDs from slugs in the value field
+                            $term_slugs = explode( ' | ', $attr_data['value'] );
+                            $term_ids = array();
+                            foreach ( $term_slugs as $slug ) {
+                                $term_obj = get_term_by( 'slug', trim( $slug ), $attr_slug );
+                                if ( $term_obj ) {
+                                    $term_ids[] = $term_obj->term_id;
+                                }
+                            }
+                        }
+                        
+                        $attr_obj->set_options( $term_ids );
+                        $attr_obj->set_position( $attr_data['position'] ?? 0 );
+                        $attr_obj->set_visible( $attr_data['is_visible'] ?? 1 );
+                        $attr_obj->set_variation( $attr_data['is_variation'] ?? 1 );
+                        
+                        $wc_attributes[ $attr_slug ] = $attr_obj;
+                    }
+                    
+                    // Set attributes on the product
+                    $product_variable->set_attributes( $wc_attributes );
+                    $product_variable->save();
+                    $logs[] = "[DEBUG] Product instantiated as WC_Product_Variable with attributes and saved";
+                } catch ( Exception $e ) {
+                    $logs[] = "[WARNING] Failed to instantiate as WC_Product_Variable: " . $e->getMessage();
+                }
+            } else {
+                // Fallback: save attributes to meta if WC_Product_Variable not available
+                if ( ! empty( $product_attributes ) ) {
+                    update_post_meta( $parent_id, '_product_attributes', $product_attributes );
+                }
+            }
+
+            // Ensure _product_attributes meta always reflects the latest slug list for admin display
             if ( ! empty( $product_attributes ) ) {
                 update_post_meta( $parent_id, '_product_attributes', $product_attributes );
             }
@@ -725,7 +852,8 @@ class InkSoft_Sync_Manager {
 
                 // Set attributes
                 foreach ( $attribute_meta as $attr_slug => $attr_value ) {
-                    update_post_meta( $variation_id, $attr_slug, $attr_value );
+                    $variation_meta_key = 'attribute_' . $attr_slug;
+                    update_post_meta( $variation_id, $variation_meta_key, $attr_value );
                 }
 
                 $variation_ids[] = $variation_id;
