@@ -201,6 +201,10 @@ class InkSoft_Sync_AJAX {
 
         update_post_meta( $product_id_wp, '_regular_price', wc_format_decimal( $price ) );
         update_post_meta( $product_id_wp, '_price', wc_format_decimal( $price ) );
+        
+        update_post_meta( $product_id_wp, '_inksoft_product_id', $product_id );
+        update_post_meta( $product_id_wp, '_inksoft_store_uri', $store );
+        $logs[] = "Saved InkSoft product ID: {$product_id}";
 
         $attr_validation = $manager->validate_product_attributes( $product, $logs );
         $is_variable = $attr_validation['is_variable'];

@@ -27,6 +27,7 @@ define( 'INKSOFT_WOO_SYNC_URL', plugin_dir_url( __FILE__ ) );
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-inksoft-api.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-sync-manager.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-sync-ajax.php';
+require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-product-display.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'admin/class-admin.php';
 
 // Initialize the plugin
