@@ -23,6 +23,14 @@ define( 'INKSOFT_WOO_SYNC_VERSION', '1.0.0' );
 define( 'INKSOFT_WOO_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'INKSOFT_WOO_SYNC_URL', plugin_dir_url( __FILE__ ) );
 
+// Declare compatibility with WooCommerce features
+add_action( 'before_woocommerce_init', function() {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', __FILE__, true );
+	}
+} );
+
 // Include required files
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-inksoft-api.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-sync-manager.php';
