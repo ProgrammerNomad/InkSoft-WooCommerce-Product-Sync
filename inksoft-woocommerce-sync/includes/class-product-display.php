@@ -77,21 +77,14 @@ class InkSoft_Product_Display {
 
         if ( $mode === 'embed_only' ) {
             // Layer 1: PHP hook removal — works for classic WooCommerce templates.
-            // Run inside the hook itself (priority 1) so we remove callbacks at the last possible
-            // moment, after any theme or plugin may have re-registered them.
-            remove_action( 'woocommerce_before_main_content', 'woocommerce_breadcrumb', 20 );
-
-            add_action( 'woocommerce_before_single_product_summary', function() {
-                // Remove images / sale-flash on THIS hook (they fire at priorities 10 and 20).
-                remove_action( 'woocommerce_before_single_product_summary', 'woocommerce_show_product_sale_flash', 10 );
-                remove_action( 'woocommerce_before_single_product_summary', 'woocommerce_show_product_images', 20 );
-                // Remove all downstream hooks.
-                remove_all_actions( 'woocommerce_single_product_summary' );
-                remove_all_actions( 'woocommerce_after_single_product_summary' );
-                remove_all_actions( 'woocommerce_after_single_product' );
+            // Remove only the Add to Cart form; keep images, title, price, description.
+            add_action( 'woocommerce_single_product_summary', function() {
+                remove_action( 'woocommerce_single_product_summary', 'woocommerce_template_single_add_to_cart', 30 );
+                remove_action( 'woocommerce_single_product_summary', 'woocommerce_template_single_meta', 40 );
             }, 1 );
+            remove_all_actions( 'woocommerce_after_single_product_summary' );
 
-            // Render the embed at priority 5 (after priority-1 cleanup, before WooCommerce priority-10 images).
+            // Render the embed before the product summary.
             add_action( 'woocommerce_before_single_product_summary', array( $this, 'render_inksoft_embed' ), 5 );
 
             // Layer 2: CSS hiding — guaranteed fallback for block-based WooCommerce (WooCommerce 8+ / block themes).
@@ -104,29 +97,22 @@ class InkSoft_Product_Display {
 
             add_action( 'wp_head', function() {
                 echo '<style id="inksoft-embed-only-css">
-/* InkSoft: embed-only mode — hide all WooCommerce product content */
+/* InkSoft: embed-only mode — hide Add to Cart, keep images + product info visible */
 
-/* Classic WooCommerce template selectors */
-body.inksoft-embed-only .woocommerce-product-gallery,
-body.inksoft-embed-only .woocommerce-breadcrumb,
-body.inksoft-embed-only .product > .summary.entry-summary,
+/* Classic WooCommerce: hide add-to-cart form, tabs, related/upsell sections */
+body.inksoft-embed-only .cart,
+body.inksoft-embed-only form.cart,
 body.inksoft-embed-only .woocommerce-tabs,
 body.inksoft-embed-only .related.products,
 body.inksoft-embed-only .up-sells.products,
 
-/* WooCommerce block theme selectors (WC 8+) */
-body.inksoft-embed-only .wp-block-woocommerce-product-image-gallery,
-body.inksoft-embed-only .wp-block-woocommerce-breadcrumbs,
-body.inksoft-embed-only .wp-block-woocommerce-product-price,
+/* WooCommerce block theme (WC 8+): hide cart/checkout blocks only */
 body.inksoft-embed-only .wp-block-add-to-cart-form,
 body.inksoft-embed-only .wp-block-woocommerce-add-to-cart-form,
-body.inksoft-embed-only .wp-block-woocommerce-product-summary,
 body.inksoft-embed-only .wp-block-woocommerce-product-meta,
-body.inksoft-embed-only .wp-block-woocommerce-product-rating,
 body.inksoft-embed-only .wp-block-woocommerce-product-sku,
 body.inksoft-embed-only .wp-block-woocommerce-product-stock-indicator,
-body.inksoft-embed-only .wp-block-woocommerce-related-products,
-body.inksoft-embed-only .wp-block-woocommerce-product-details > :not(.embed-container) {
+body.inksoft-embed-only .wp-block-woocommerce-related-products {
     display: none !important;
 }
 
@@ -134,7 +120,7 @@ body.inksoft-embed-only .wp-block-woocommerce-product-details > :not(.embed-cont
 body.inksoft-embed-only .embed-container {
     width: 100% !important;
     max-width: 100% !important;
-    margin: 0 !important;
+    margin: 0 0 2em 0 !important;
     padding: 0 !important;
 }
 </style>' . "\n";
