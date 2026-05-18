@@ -241,6 +241,16 @@ class InkSoft_Sync_AJAX {
         $image_replace = (int) ( $settings['image_replace'] ?? 1 );
         $manager->sync_product_images( $product_id_wp, $product, $image_replace, $logs );
 
+        // Auto-detect display type from InkSoft product capabilities.
+        // Only set on first sync; admin manual override via _inksoft_display_type is preserved.
+        $existing_type = get_post_meta( $product_id_wp, '_inksoft_display_type', true );
+        if ( empty( $existing_type ) ) {
+            $can_design = ! empty( $product['CanPrint'] ) || ! empty( $product['CanDigitalPrint'] )
+                       || ! empty( $product['CanScreenPrint'] ) || ! empty( $product['CanEmbroider'] );
+            update_post_meta( $product_id_wp, '_inksoft_display_type', $can_design ? 'designer' : 'contact_form' );
+            $logs[] = "Display type auto-set to " . ( $can_design ? 'designer' : 'contact_form' );
+        }
+
         wp_send_json_success( array(
             'message'    => 'Product synced successfully',
             'product_id' => $product_id,

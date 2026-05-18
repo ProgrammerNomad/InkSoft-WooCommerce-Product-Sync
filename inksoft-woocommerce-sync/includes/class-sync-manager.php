@@ -347,6 +347,16 @@ class InkSoft_Sync_Manager {
             update_post_meta( $product_id, '_inksoft_store_uri', $store_uri );
             update_post_meta( $product_id, '_inksoft_synced_at', current_time( 'mysql' ) );
 
+            // Auto-detect display type from InkSoft product capabilities.
+            // Only set on first sync; admin manual override via _inksoft_display_type is preserved.
+            $existing_type = get_post_meta( $product_id, '_inksoft_display_type', true );
+            if ( empty( $existing_type ) ) {
+                $can_design = ! empty( $p['CanPrint'] ) || ! empty( $p['CanDigitalPrint'] )
+                           || ! empty( $p['CanScreenPrint'] ) || ! empty( $p['CanEmbroider'] );
+                update_post_meta( $product_id, '_inksoft_display_type', $can_design ? 'designer' : 'contact_form' );
+                $logs[] = "[INFO] Display type auto-set to " . ( $can_design ? 'designer' : 'contact_form' ) . " for product ID {$p['ID']}";
+            }
+
             // Track imported SKUs per store
             $this->track_imported_product( $store_uri, $sku, $product_id );
 
