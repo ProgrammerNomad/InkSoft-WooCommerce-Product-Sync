@@ -212,6 +212,10 @@ class InkSoft_Sync_AJAX {
         if ( $is_variable ) {
             update_post_meta( $product_id_wp, '_product_type', 'variable' );
             $manager->clear_product_cache( $product_id_wp, $logs );
+            // On re-sync, delete existing variations first to avoid duplicates
+            if ( $existing_id ) {
+                $manager->delete_existing_variations( $product_id_wp, $logs );
+            }
             $manager->create_product_variations( $product_id_wp, $product, $price, $logs );
             $logs[] = "Created as variable product";
         } else {
@@ -223,11 +227,20 @@ class InkSoft_Sync_AJAX {
         update_post_meta( $product_id_wp, '_stock_status', 'instock' );
         update_post_meta( $product_id_wp, '_stock', 999 );
 
+        // Categories — single source of truth via shared method
+        $cat_map_result = $manager->get_category_map_cached( $api, $store, $logs );
+        $cat_map        = $cat_map_result['map'] ?? array();
+        $manager->assign_product_categories( $product_id_wp, $product_id, $cat_map, $logs );
+
+        // Images — single source of truth via shared method
+        $image_replace = (int) ( $settings['image_replace'] ?? 1 );
+        $manager->sync_product_images( $product_id_wp, $product, $image_replace, $logs );
+
         wp_send_json_success( array(
-            'message' => 'Product synced successfully',
+            'message'    => 'Product synced successfully',
             'product_id' => $product_id,
-            'wp_id' => $product_id_wp,
-            'logs' => $logs
+            'wp_id'      => $product_id_wp,
+            'logs'       => $logs,
         ) );
     }
 }

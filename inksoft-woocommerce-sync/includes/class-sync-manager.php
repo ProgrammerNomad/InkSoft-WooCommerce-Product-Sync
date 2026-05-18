@@ -155,6 +155,10 @@ class InkSoft_Sync_Manager {
         $logs[] = "[DEBUG] API base URL: {$base}";
         $api = new INKSOFT_API( $api_key, $base );
 
+        // Fetch category map once per chunk (result is transient-cached per store)
+        $cat_map_result = $this->get_category_map_cached( $api, $store_uri, $logs );
+        $cat_map = $cat_map_result['map'] ?? array();
+
         $logs[] = "[DEBUG] Calling API GetProductBaseList...";
         $result = $api->request( 'GetProductBaseList', array( 'Page' => (int) $page, 'PageSize' => (int) $page_size ) );
 
@@ -260,12 +264,12 @@ class InkSoft_Sync_Manager {
                 
                 if ( $is_variable ) {
                     $logs[] = "[DEBUG] Product classified as VARIABLE ({$validation_reason})";
-                    // Set product type to variable using meta
                     update_post_meta( $product_id, '_product_type', 'variable' );
-                    // Clear ALL product caches to force WooCommerce to re-read the type
                     $this->clear_product_cache( $product_id, $logs );
-                    $logs[] = "[DEBUG] Product type set to: variable";
-                    // Create variations for each style+size combination
+                    // On re-sync, delete existing variations first to avoid duplicates
+                    if ( $existing_id ) {
+                        $this->delete_existing_variations( $product_id, $logs );
+                    }
                     $this->create_product_variations( $product_id, $p, $price, $logs );
                 } else {
                     $logs[] = "[DEBUG] Product classified as SIMPLE ({$validation_reason})";
@@ -307,84 +311,12 @@ class InkSoft_Sync_Manager {
                 $logs[] = "[ERROR] Failed to set manufacturer/supplier: " . $e->getMessage();
             }
 
-            // Categories (best-effort)
-            $cats = array();
-            if ( ! empty( $p['Categories'] ) && is_array( $p['Categories'] ) ) {
-                foreach ( $p['Categories'] as $c ) {
-                    $name = is_array( $c ) ? ( $c['Name'] ?? '' ) : $c;
-                    if ( empty( $name ) ) continue;
-                    $term = term_exists( $name, 'product_cat' );
-                    if ( ! $term ) {
-                        $term = wp_insert_term( $name, 'product_cat' );
-                        if ( is_wp_error( $term ) ) continue;
-                        $term_id = $term['term_id'];
-                    } else {
-                        $term_id = is_array( $term ) ? $term['term_id'] : $term[0];
-                    }
-                    $cats[] = (int) $term_id;
-                }
-            } elseif ( ! empty( $p['Category'] ) ) {
-                $name = $p['Category'];
-                $term = term_exists( $name, 'product_cat' );
-                if ( ! $term ) {
-                    $term = wp_insert_term( $name, 'product_cat' );
-                    if ( ! is_wp_error( $term ) ) $cats[] = (int) $term['term_id'];
-                } else {
-                    $cats[] = (int) ( is_array( $term ) ? $term['term_id'] : $term[0] );
-                }
-            }
+            // Categories — single source of truth via shared method
+            $this->assign_product_categories( $product_id, $p['ID'], $cat_map, $logs );
 
-            if ( ! empty( $cats ) ) {
-                wp_set_post_terms( $product_id, $cats, 'product_cat' );
-            }
-
-            // Images (styles)
+            // Images — single source of truth via shared method
             $image_replace = (int) ( $settings['image_replace'] ?? ( get_option( 'inksoft_woo_settings' )['image_replace'] ?? 1 ) );
-            
-            // Download all images from all sides
-            $image_ids = array();
-            $logs[] = "[DEBUG] Processing images for product {$product_id}";
-            
-            if ( ! empty( $p['Styles'][0]['Sides'] ) && is_array( $p['Styles'][0]['Sides'] ) ) {
-                $logs[] = "[DEBUG] Found " . count( $p['Styles'][0]['Sides'] ) . " sides with images";
-                foreach ( $p['Styles'][0]['Sides'] as $idx => $side ) {
-                    if ( ! empty( $side['ImageFilePath'] ) ) {
-                        $image_path = $side['ImageFilePath'];
-                        // Image paths are absolute paths on stores.inksoft.com, NOT relative to store
-                        $image_url = 'https://stores.inksoft.com' . $image_path;
-                        $logs[] = "[DEBUG] Downloading image {$idx}: {$side['Side']} from {$image_url}";
-                        
-                        $image_id = $this->maybe_set_featured_image( $product_id, $image_url, $image_replace );
-                        if ( $image_id ) {
-                            $image_ids[] = $image_id;
-                            $logs[] = "[DEBUG] Image {$idx} saved with ID={$image_id}";
-                        } else {
-                            $logs[] = "[ERROR] Failed to download image {$idx}: {$image_url}";
-                        }
-                    }
-                }
-            } elseif ( ! empty( $p['Styles'][0]['ImageFilePath'] ) ) {
-                // Fallback: use single image if no sides array
-                $image_path = $p['Styles'][0]['ImageFilePath'];
-                $image_url = 'https://stores.inksoft.com' . $image_path;
-                $logs[] = "[DEBUG] Using fallback single image from Styles[0]";
-                
-                $image_id = $this->maybe_set_featured_image( $product_id, $image_url, $image_replace );
-                if ( $image_id ) {
-                    $image_ids[] = $image_id;
-                    $logs[] = "[DEBUG] Fallback image saved with ID={$image_id}";
-                }
-            } else {
-                $logs[] = "[WARNING] No images found for product {$product_id}";
-            }
-            
-            // Set gallery images (all except the first as featured)
-            if ( count( $image_ids ) > 1 ) {
-                update_post_meta( $product_id, '_product_image_gallery', implode( ',', array_slice( $image_ids, 1 ) ) );
-                $logs[] = "[DEBUG] Set gallery with " . (count($image_ids) - 1) . " additional images";
-            } elseif ( count( $image_ids ) === 1 ) {
-                $logs[] = "[DEBUG] Single image set as featured only";
-            }
+            $this->sync_product_images( $product_id, $p, $image_replace, $logs );
 
             // VERIFICATION: Check product type after creation
             try {
@@ -480,6 +412,123 @@ class InkSoft_Sync_Manager {
     }
 
     /**
+     * SINGLE SOURCE OF TRUTH for image syncing.
+     * Downloads all sides of the first style as WooCommerce product images.
+     * First side = featured image. Remaining sides = product gallery.
+     * On re-sync with $image_replace=true, old attachments are fully removed first.
+     */
+    public function sync_product_images( $product_id_wp, array $product_data, $image_replace, &$logs ) {
+        $logs[] = "[DEBUG] Syncing images for product {$product_id_wp}";
+
+        // Collect image URLs from Styles[0].Sides[].ImageFilePath
+        $image_urls = array();
+        $sides = $product_data['Styles'][0]['Sides'] ?? array();
+        if ( is_array( $sides ) ) {
+            foreach ( $sides as $side ) {
+                $path = $side['ImageFilePath'] ?? '';
+                if ( ! empty( $path ) ) {
+                    $image_urls[] = 'https://stores.inksoft.com' . $path;
+                }
+            }
+        }
+
+        // Fallback to ImageFilePath_Front on the style itself
+        if ( empty( $image_urls ) ) {
+            $front = $product_data['Styles'][0]['ImageFilePath_Front'] ?? '';
+            if ( ! empty( $front ) ) {
+                $image_urls[] = 'https://stores.inksoft.com' . $front;
+            }
+        }
+
+        if ( empty( $image_urls ) ) {
+            $logs[] = "[WARNING] No images found for product {$product_id_wp}";
+            return;
+        }
+
+        $logs[] = "[DEBUG] Found " . count( $image_urls ) . " image URL(s) to sync";
+
+        // On replace: delete existing thumbnail and gallery attachments
+        if ( $image_replace ) {
+            $old_thumb = get_post_thumbnail_id( $product_id_wp );
+            if ( $old_thumb ) {
+                wp_delete_attachment( $old_thumb, true );
+                delete_post_thumbnail( $product_id_wp );
+                $logs[] = "[DEBUG] Deleted old featured image (ID={$old_thumb})";
+            }
+            $old_gallery = get_post_meta( $product_id_wp, '_product_image_gallery', true );
+            if ( ! empty( $old_gallery ) ) {
+                foreach ( explode( ',', $old_gallery ) as $gid ) {
+                    $gid = (int) $gid;
+                    if ( $gid > 0 ) {
+                        wp_delete_attachment( $gid, true );
+                    }
+                }
+                delete_post_meta( $product_id_wp, '_product_image_gallery' );
+                $logs[] = "[DEBUG] Deleted old gallery images";
+            }
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        $image_ids = array();
+        foreach ( $image_urls as $idx => $url ) {
+            $tmp = download_url( $url );
+            if ( is_wp_error( $tmp ) ) {
+                $logs[] = "[ERROR] Failed to download image " . ( $idx + 1 ) . ": " . $tmp->get_error_message();
+                continue;
+            }
+            $parsed   = parse_url( $url );
+            $filename = basename( $parsed['path'] );
+            $file_array = array( 'name' => $filename, 'tmp_name' => $tmp );
+            $attachment_id = media_handle_sideload( $file_array, $product_id_wp );
+            if ( is_wp_error( $attachment_id ) ) {
+                @unlink( $tmp );
+                $logs[] = "[ERROR] Failed to sideload image " . ( $idx + 1 ) . ": " . $attachment_id->get_error_message();
+                continue;
+            }
+            $image_ids[] = $attachment_id;
+            $logs[] = "[DEBUG] Image " . ( $idx + 1 ) . " attached (attachment_id={$attachment_id}, file={$filename})";
+        }
+
+        if ( empty( $image_ids ) ) {
+            $logs[] = "[WARNING] No images were successfully downloaded for product {$product_id_wp}";
+            return;
+        }
+
+        // First image = featured thumbnail
+        set_post_thumbnail( $product_id_wp, $image_ids[0] );
+        $logs[] = "[DEBUG] Featured image set to attachment_id={$image_ids[0]}";
+
+        // Remaining images = gallery
+        if ( count( $image_ids ) > 1 ) {
+            $gallery_ids = array_slice( $image_ids, 1 );
+            update_post_meta( $product_id_wp, '_product_image_gallery', implode( ',', $gallery_ids ) );
+            $logs[] = "[DEBUG] Gallery set with " . count( $gallery_ids ) . " additional image(s)";
+        }
+    }
+
+    /**
+     * Delete all existing variation posts for a product before recreating.
+     * Required on re-sync to prevent duplicate variations.
+     */
+    public function delete_existing_variations( $product_id_wp, &$logs ) {
+        $variation_ids = get_posts( array(
+            'post_type'      => 'product_variation',
+            'post_parent'    => $product_id_wp,
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+        ) );
+        if ( ! empty( $variation_ids ) ) {
+            foreach ( $variation_ids as $var_id ) {
+                wp_delete_post( $var_id, true );
+            }
+            $logs[] = "[DEBUG] Deleted " . count( $variation_ids ) . " existing variation(s) before resync";
+        }
+    }
+
+    /**
      * Delete or mark as out-of-stock products that are no longer in InkSoft
      */
     protected function delete_missing_products( $store_uri ) {
@@ -542,6 +591,122 @@ class InkSoft_Sync_Manager {
         update_option( $opt, $imported_skus );
     }
     
+    /**
+     * Fetch the InkSoft category→product map once per store and cache it in a transient.
+     * Subsequent calls within the same sync session return the cached map.
+     *
+     * Returns: array with key 'map' => [ inksoft_product_id => [ ['parent'=>..., 'name'=>...], ... ] ]
+     */
+    public function get_category_map_cached( INKSOFT_API $api, $store_uri, &$logs ) {
+        $transient_key = 'inksoft_cat_map_' . md5( $store_uri );
+        $cached        = get_transient( $transient_key );
+        if ( $cached !== false ) {
+            $logs[] = "[DEBUG] Category map loaded from cache (" . count( $cached ) . " product entries)";
+            return array( 'success' => true, 'map' => $cached );
+        }
+
+        $logs[] = "[DEBUG] Fetching category map from InkSoft API (GetProductCategories)...";
+        $result = $api->get_category_product_map();
+
+        if ( ! $result['success'] ) {
+            $logs[] = "[ERROR] Failed to fetch category map: " . ( $result['error'] ?? 'Unknown' );
+            return array( 'success' => false, 'map' => array() );
+        }
+
+        $map = $result['map'];
+        $logs[] = "[DEBUG] Category map built: " . count( $map ) . " products have categories";
+
+        // Cache for 1 hour
+        set_transient( $transient_key, $map, HOUR_IN_SECONDS );
+
+        return array( 'success' => true, 'map' => $map );
+    }
+
+    /**
+     * Assign WooCommerce product_cat terms to a product using the pre-built category map.
+     * This is the SINGLE SOURCE OF TRUTH for category assignment.
+     * Supports parent→child hierarchy matching the InkSoft category tree.
+     *
+     * @param int   $product_id_wp    WooCommerce post ID
+     * @param int   $inksoft_id       InkSoft product ID
+     * @param array $cat_map          Map from get_category_map_cached()
+     * @param array &$logs            Logs array
+     */
+    public function assign_product_categories( $product_id_wp, $inksoft_id, array $cat_map, &$logs ) {
+        $inksoft_id = (int) $inksoft_id;
+        $logs[]     = "[DEBUG] Assigning categories for InkSoft ID {$inksoft_id} → WP post {$product_id_wp}";
+
+        if ( empty( $cat_map[ $inksoft_id ] ) ) {
+            $logs[] = "[WARNING] No categories found in map for InkSoft ID {$inksoft_id}";
+            return;
+        }
+
+        $entries  = $cat_map[ $inksoft_id ];
+        $term_ids = array();
+
+        foreach ( $entries as $entry ) {
+            $parent_name   = $entry['parent'] ?? null;
+            $cat_name      = trim( $entry['name'] ?? '' );
+
+            if ( empty( $cat_name ) ) {
+                continue;
+            }
+
+            // Create or find the parent category first
+            $parent_term_id = 0;
+            if ( ! empty( $parent_name ) ) {
+                $parent_term = term_exists( $parent_name, 'product_cat' );
+                if ( ! $parent_term ) {
+                    $parent_result = wp_insert_term( $parent_name, 'product_cat' );
+                    if ( is_wp_error( $parent_result ) ) {
+                        $logs[] = "[ERROR] Failed to create parent category '{$parent_name}': " . $parent_result->get_error_message();
+                    } else {
+                        $parent_term_id = (int) $parent_result['term_id'];
+                        $logs[] = "[DEBUG] Created parent category '{$parent_name}' (term_id={$parent_term_id})";
+                    }
+                } else {
+                    $parent_term_id = (int) ( is_array( $parent_term ) ? $parent_term['term_id'] : $parent_term );
+                    $logs[] = "[DEBUG] Found parent category '{$parent_name}' (term_id={$parent_term_id})";
+                }
+            }
+
+            // Create or find the child/leaf category
+            $term = term_exists( $cat_name, 'product_cat', $parent_term_id ?: 0 );
+            if ( ! $term ) {
+                $insert_args = $parent_term_id > 0 ? array( 'parent' => $parent_term_id ) : array();
+                $result      = wp_insert_term( $cat_name, 'product_cat', $insert_args );
+                if ( is_wp_error( $result ) ) {
+                    $logs[] = "[WARNING] wp_insert_term failed for '{$cat_name}': " . $result->get_error_message() . " — trying fallback lookup";
+                    $fallback = term_exists( $cat_name, 'product_cat' );
+                    if ( $fallback ) {
+                        $term_id    = (int) ( is_array( $fallback ) ? $fallback['term_id'] : $fallback );
+                        $term_ids[] = $term_id;
+                        $logs[]     = "[DEBUG] Fallback: found '{$cat_name}' term_id={$term_id}";
+                    }
+                    continue;
+                }
+                $term_id    = (int) $result['term_id'];
+                $term_ids[] = $term_id;
+                $logs[]     = "[DEBUG] Created category '{$cat_name}' (term_id={$term_id}, parent={$parent_term_id})";
+            } else {
+                $term_id    = (int) ( is_array( $term ) ? $term['term_id'] : $term );
+                $term_ids[] = $term_id;
+                $logs[]     = "[DEBUG] Found category '{$cat_name}' (term_id={$term_id})";
+            }
+        }
+
+        if ( ! empty( $term_ids ) ) {
+            $set_result = wp_set_post_terms( $product_id_wp, array_unique( $term_ids ), 'product_cat' );
+            if ( is_wp_error( $set_result ) ) {
+                $logs[] = "[ERROR] wp_set_post_terms failed: " . $set_result->get_error_message();
+            } else {
+                $logs[] = "[DEBUG] Assigned " . count( array_unique( $term_ids ) ) . " category term(s) to WP post {$product_id_wp}: " . implode( ', ', array_unique( $term_ids ) );
+            }
+        } else {
+            $logs[] = "[WARNING] No valid category terms to assign for InkSoft ID {$inksoft_id}";
+        }
+    }
+
     /**
      * Ensure attribute exists in WooCommerce
      */

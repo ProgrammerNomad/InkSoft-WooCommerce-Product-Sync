@@ -120,7 +120,7 @@ class INKSOFT_API {
     }
     
     /**
-     * Get product categories
+     * Get product categories (raw tree)
      */
     public function get_categories() {
         $result = $this->request('GetProductCategories');
@@ -138,6 +138,62 @@ class INKSOFT_API {
             'count' => count($result['data'] ?? array()),
         );
     }
+
+    /**
+     * Build a reverse map: InkSoft product ID => array of category entries
+     * Each entry: [ 'parent' => parentName|null, 'name' => categoryName ]
+     *
+     * The InkSoft API stores categories as a tree with ItemIds on each node.
+     * Product objects themselves never carry category data.
+     */
+    public function get_category_product_map() {
+        $result = $this->request('GetProductCategories');
+
+        if (!$result['success']) {
+            return array(
+                'success' => false,
+                'error'   => $result['error'] ?? 'Unknown error',
+                'map'     => array(),
+            );
+        }
+
+        $tree = $result['data'] ?? array();
+        if (!is_array($tree)) {
+            return array('success' => true, 'map' => array());
+        }
+
+        $map = array();
+        $this->walk_category_tree($tree, null, $map);
+
+        return array('success' => true, 'map' => $map);
+    }
+
+    /**
+     * Recursively walk the category tree and populate the reverse product->category map
+     */
+    private function walk_category_tree(array $cats, $parent_name, array &$map) {
+        foreach ($cats as $cat) {
+            $name = trim($cat['Name'] ?? '');
+            if (empty($name)) {
+                continue;
+            }
+
+            foreach ($cat['ItemIds'] ?? array() as $product_id) {
+                $product_id = (int) $product_id;
+                if (!isset($map[$product_id])) {
+                    $map[$product_id] = array();
+                }
+                $map[$product_id][] = array(
+                    'parent' => $parent_name,
+                    'name'   => $name,
+                );
+            }
+
+            if (!empty($cat['Children'])) {
+                $this->walk_category_tree($cat['Children'], $name, $map);
+            }
+        }
+    }
     
     /**
      * Get store data
@@ -153,9 +209,9 @@ class INKSOFT_API {
     public function get_product_detail($product_id) {
         $result = $this->request('GetProduct', array(
             'ProductId' => $product_id,
-            'IncludePricing' => 'true',
-            'IncludeQuantityPacks' => 'true',
-            'IncludeCategories' => 'true',
+            'IncludePricing' => 1,
+            'IncludeQuantityPacks' => 1,
+            'IncludeCategories' => 1,
         ));
         
         if (!$result['success']) {
