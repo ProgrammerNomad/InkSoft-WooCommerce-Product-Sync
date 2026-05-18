@@ -3,7 +3,7 @@
  * Plugin Name: InkSoft WooCommerce Product Sync
  * Plugin URI: https://github.com/ProgrammerNomad/InkSoft-WooCommerce-Product-Sync
  * Description: Sync products from multiple InkSoft stores to WooCommerce
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Developer
  * Author URI: https://github.com/ProgrammerNomad
  * License: GPL v2 or later
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'INKSOFT_WOO_SYNC_VERSION', '1.0.0' );
+define( 'INKSOFT_WOO_SYNC_VERSION', '1.1.0' );
 define( 'INKSOFT_WOO_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'INKSOFT_WOO_SYNC_URL', plugin_dir_url( __FILE__ ) );
 

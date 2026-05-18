@@ -101,6 +101,45 @@ class InkSoft_Woo_Sync_Admin {
             <p><button id="inksoft-start-sync" class="button button-primary"><?php esc_html_e( 'Start Sync (AJAX)', 'inksoft-woo-sync' ); ?></button></p>
 
             <div id="inksoft-sync-log" style="background:#fff;padding:12px;border:1px solid #ddd;max-height:400px;overflow:auto;font-family:monospace;white-space:pre-wrap;"></div>
+
+            <hr />
+            <h2 style="color:#b32d2e;"><?php esc_html_e( 'Danger Zone', 'inksoft-woo-sync' ); ?></h2>
+            <p><?php esc_html_e( 'Permanently delete all products that were imported from InkSoft. Choose what to remove — only items exclusively created by InkSoft sync will be deleted.', 'inksoft-woo-sync' ); ?></p>
+
+            <div id="inksoft-purge-section">
+                <button id="inksoft-purge-check" class="button"><?php esc_html_e( 'Preview what will be deleted', 'inksoft-woo-sync' ); ?></button>
+
+                <div id="inksoft-purge-counts" style="display:none;margin-top:15px;padding:12px;background:#fff8e1;border:1px solid #ffc107;border-radius:3px;"></div>
+
+                <div id="inksoft-purge-form" style="display:none;margin-top:15px;">
+                    <strong><?php esc_html_e( 'Select what to delete:', 'inksoft-woo-sync' ); ?></strong>
+                    <ul style="margin-top:8px;">
+                        <li><label><input type="checkbox" id="purge_products" checked /> <?php esc_html_e( 'Products', 'inksoft-woo-sync' ); ?> (<span id="count-products">0</span> products + their variations)</label></li>
+                        <li><label><input type="checkbox" id="purge_images" checked /> <?php esc_html_e( 'Product images', 'inksoft-woo-sync' ); ?> (<span id="count-images">0</span> attachments)</label></li>
+                        <li><label><input type="checkbox" id="purge_categories" /> <?php esc_html_e( 'Product categories', 'inksoft-woo-sync' ); ?> (<span id="count-categories">0</span> — only if no other products use them)</label></li>
+                        <li><label><input type="checkbox" id="purge_tags" /> <?php esc_html_e( 'Product tags', 'inksoft-woo-sync' ); ?> (<span id="count-tags">0</span> — only if no other products use them)</label></li>
+                        <li><label><input type="checkbox" id="purge_attributes" /> <?php esc_html_e( 'Attribute terms', 'inksoft-woo-sync' ); ?> (pa_color, pa_size etc. — <span id="count-attributes">0</span> — only if no other products use them)</label></li>
+                    </ul>
+                    <p style="margin-top:12px;">
+                        <button id="inksoft-purge-execute" class="button" style="background:#b32d2e;color:#fff;border-color:#a02020;"><?php esc_html_e( 'Delete Selected Items', 'inksoft-woo-sync' ); ?></button>
+                    </p>
+                </div>
+
+                <div id="inksoft-purge-log" style="display:none;background:#fff;padding:12px;border:1px solid #ddd;max-height:300px;overflow:auto;font-family:monospace;white-space:pre-wrap;margin-top:15px;"></div>
+            </div>
+
+            <!-- Confirmation modal -->
+            <div id="inksoft-purge-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center;">
+                <div style="background:#fff;padding:30px;max-width:520px;width:90%;border-radius:4px;box-shadow:0 5px 20px rgba(0,0,0,0.35);">
+                    <h2 style="margin-top:0;color:#b32d2e;"><?php esc_html_e( 'Confirm Permanent Deletion', 'inksoft-woo-sync' ); ?></h2>
+                    <p id="inksoft-purge-modal-message"></p>
+                    <p style="color:#666;font-size:12px;"><?php esc_html_e( 'This action cannot be undone. Make sure you have a database backup.', 'inksoft-woo-sync' ); ?></p>
+                    <div style="margin-top:20px;text-align:right;">
+                        <button id="inksoft-purge-cancel" class="button button-secondary" style="margin-right:10px;"><?php esc_html_e( 'Cancel', 'inksoft-woo-sync' ); ?></button>
+                        <button id="inksoft-purge-confirm" class="button button-primary" style="background:#b32d2e;border-color:#a02020;"><?php esc_html_e( 'Yes, Delete Now', 'inksoft-woo-sync' ); ?></button>
+                    </div>
+                </div>
+            </div>
         </div>
         <?php
     }

@@ -10,6 +10,10 @@ class InkSoft_Sync_AJAX {
         add_action( 'wp_ajax_inksoft_woo_sync_status', array( $this, 'ajax_status' ) );
         add_action( 'wp_ajax_inksoft_woo_get_product_list', array( $this, 'ajax_get_product_list' ) );
         add_action( 'wp_ajax_inksoft_woo_sync_single_product', array( $this, 'ajax_sync_single_product' ) );
+        add_action( 'wp_ajax_inksoft_woo_purge_check', array( $this, 'ajax_purge_check' ) );
+        add_action( 'wp_ajax_inksoft_woo_purge_get_ids', array( $this, 'ajax_purge_get_ids' ) );
+        add_action( 'wp_ajax_inksoft_woo_purge_delete_batch', array( $this, 'ajax_purge_delete_batch' ) );
+        add_action( 'wp_ajax_inksoft_woo_purge_cleanup', array( $this, 'ajax_purge_cleanup' ) );
     }
 
     public function ajax_start() {
@@ -204,6 +208,7 @@ class InkSoft_Sync_AJAX {
         
         update_post_meta( $product_id_wp, '_inksoft_product_id', $product_id );
         update_post_meta( $product_id_wp, '_inksoft_store_uri', $store );
+        update_post_meta( $product_id_wp, '_inksoft_synced_at', current_time( 'mysql' ) );
         $logs[] = "Saved InkSoft product ID: {$product_id}";
 
         $attr_validation = $manager->validate_product_attributes( $product, $logs );
@@ -241,6 +246,230 @@ class InkSoft_Sync_AJAX {
             'product_id' => $product_id,
             'wp_id'      => $product_id_wp,
             'logs'       => $logs,
+        ) );
+    }
+
+    // -------------------------------------------------------------------------
+    // Purge helpers
+    // -------------------------------------------------------------------------
+
+    private function get_synced_product_ids() {
+        global $wpdb;
+        $ids = $wpdb->get_col( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_inksoft_product_id'" );
+        return array_map( 'intval', $ids );
+    }
+
+    private function get_product_image_ids( array $product_ids ) {
+        if ( empty( $product_ids ) ) {
+            return array();
+        }
+        $image_ids = array();
+        foreach ( $product_ids as $pid ) {
+            $thumb = get_post_thumbnail_id( (int) $pid );
+            if ( $thumb ) {
+                $image_ids[] = (int) $thumb;
+            }
+            $gallery = get_post_meta( (int) $pid, '_product_image_gallery', true );
+            if ( ! empty( $gallery ) ) {
+                foreach ( array_filter( explode( ',', $gallery ) ) as $gid ) {
+                    $image_ids[] = (int) $gid;
+                }
+            }
+        }
+        return array_values( array_unique( array_filter( $image_ids ) ) );
+    }
+
+    private function collect_terms_for_products( array $product_ids, $taxonomy ) {
+        $term_ids = array();
+        foreach ( $product_ids as $pid ) {
+            $terms = wp_get_post_terms( (int) $pid, $taxonomy, array( 'fields' => 'ids' ) );
+            if ( ! is_wp_error( $terms ) ) {
+                $term_ids = array_merge( $term_ids, $terms );
+            }
+        }
+        return array_values( array_unique( $term_ids ) );
+    }
+
+    private function get_attr_taxonomies() {
+        if ( ! class_exists( 'InkSoft_Attribute_Mapper' ) ) {
+            require_once dirname( __FILE__ ) . '/class-attribute-mapper.php';
+        }
+        $taxonomies = array();
+        foreach ( InkSoft_Attribute_Mapper::get_attribute_config() as $attr ) {
+            if ( ! empty( $attr['enabled'] ) && ! empty( $attr['attribute_slug'] ) ) {
+                $taxonomies[] = $attr['attribute_slug'];
+            }
+        }
+        return $taxonomies;
+    }
+
+    /**
+     * Delete terms that are no longer used by any posts (exclusively InkSoft-sourced terms).
+     * After product deletion the objects_in_term count drops to 0 for exclusive terms.
+     * Without product deletion, we skip any term that still has non-InkSoft products.
+     */
+    private function delete_exclusive_terms( array $term_ids, $taxonomy ) {
+        $deleted = 0;
+        foreach ( $term_ids as $term_id ) {
+            $objects = get_objects_in_term( (int) $term_id, $taxonomy );
+            if ( is_wp_error( $objects ) || empty( $objects ) ) {
+                wp_delete_term( (int) $term_id, $taxonomy );
+                $deleted++;
+            }
+        }
+        return $deleted;
+    }
+
+    // -------------------------------------------------------------------------
+    // Purge: dry-run count
+    // -------------------------------------------------------------------------
+
+    public function ajax_purge_check() {
+        check_ajax_referer( 'inksoft-woo-sync', 'nonce' );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( 'Permission denied' );
+        }
+
+        $product_ids     = $this->get_synced_product_ids();
+        $attr_term_count = 0;
+        foreach ( $this->get_attr_taxonomies() as $tax ) {
+            $attr_term_count += count( $this->collect_terms_for_products( $product_ids, $tax ) );
+        }
+
+        wp_send_json_success( array(
+            'products'        => count( $product_ids ),
+            'images'          => count( $this->get_product_image_ids( $product_ids ) ),
+            'categories'      => count( $this->collect_terms_for_products( $product_ids, 'product_cat' ) ),
+            'tags'            => count( $this->collect_terms_for_products( $product_ids, 'product_tag' ) ),
+            'attribute_terms' => $attr_term_count,
+        ) );
+    }
+
+    // -------------------------------------------------------------------------
+    // Purge step 1: collect IDs and cache term associations for later cleanup
+    // -------------------------------------------------------------------------
+
+    public function ajax_purge_get_ids() {
+        check_ajax_referer( 'inksoft-woo-sync', 'nonce' );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( 'Permission denied' );
+        }
+
+        $product_ids = $this->get_synced_product_ids();
+
+        // Collect term associations BEFORE any deletion and store in transient.
+        // The cleanup step reads from this transient after products are gone.
+        $term_data = array(
+            'categories' => $this->collect_terms_for_products( $product_ids, 'product_cat' ),
+            'tags'       => $this->collect_terms_for_products( $product_ids, 'product_tag' ),
+            'attributes' => array(),
+        );
+        foreach ( $this->get_attr_taxonomies() as $tax ) {
+            $term_data['attributes'][ $tax ] = $this->collect_terms_for_products( $product_ids, $tax );
+        }
+        set_transient( 'inksoft_purge_term_data', $term_data, HOUR_IN_SECONDS );
+
+        wp_send_json_success( array(
+            'product_ids' => $product_ids,
+            'total'       => count( $product_ids ),
+        ) );
+    }
+
+    // -------------------------------------------------------------------------
+    // Purge step 2: delete one batch of products (JS calls this in a loop)
+    // Batch size is controlled by the JS (default 25). Each request stays fast.
+    // -------------------------------------------------------------------------
+
+    public function ajax_purge_delete_batch() {
+        check_ajax_referer( 'inksoft-woo-sync', 'nonce' );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( 'Permission denied' );
+        }
+
+        $product_ids  = array_map( 'intval', (array) ( $_POST['product_ids'] ?? array() ) );
+        $del_images   = ! empty( $_POST['delete_images'] );
+        $deleted      = 0;
+        $imgs_deleted = 0;
+
+        foreach ( $product_ids as $pid ) {
+            if ( $del_images ) {
+                foreach ( $this->get_product_image_ids( array( $pid ) ) as $img_id ) {
+                    if ( wp_delete_attachment( $img_id, true ) ) {
+                        $imgs_deleted++;
+                    }
+                }
+            }
+            $children = get_children( array(
+                'post_parent'    => $pid,
+                'post_type'      => 'product_variation',
+                'posts_per_page' => -1,
+                'fields'         => 'ids',
+            ) );
+            foreach ( $children as $vid ) {
+                wp_delete_post( $vid, true );
+            }
+            if ( wp_delete_post( $pid, true ) ) {
+                $deleted++;
+            }
+        }
+
+        wp_send_json_success( array(
+            'deleted'        => $deleted,
+            'images_deleted' => $imgs_deleted,
+        ) );
+    }
+
+    // -------------------------------------------------------------------------
+    // Purge step 3: clean up terms, options, verify database
+    // Called once after all product batches finish.
+    // -------------------------------------------------------------------------
+
+    public function ajax_purge_cleanup() {
+        check_ajax_referer( 'inksoft-woo-sync', 'nonce' );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( 'Permission denied' );
+        }
+
+        $del_categories = ! empty( $_POST['delete_categories'] );
+        $del_tags       = ! empty( $_POST['delete_tags'] );
+        $del_attributes = ! empty( $_POST['delete_attributes'] );
+
+        // Retrieve term associations collected before deletion
+        $term_data = get_transient( 'inksoft_purge_term_data' );
+        if ( ! is_array( $term_data ) ) {
+            $term_data = array( 'categories' => array(), 'tags' => array(), 'attributes' => array() );
+        }
+        delete_transient( 'inksoft_purge_term_data' );
+
+        $cats_deleted  = 0;
+        $tags_deleted  = 0;
+        $attrs_deleted = 0;
+
+        if ( $del_categories && ! empty( $term_data['categories'] ) ) {
+            $cats_deleted = $this->delete_exclusive_terms( $term_data['categories'], 'product_cat' );
+        }
+        if ( $del_tags && ! empty( $term_data['tags'] ) ) {
+            $tags_deleted = $this->delete_exclusive_terms( $term_data['tags'], 'product_tag' );
+        }
+        if ( $del_attributes && ! empty( $term_data['attributes'] ) ) {
+            foreach ( $term_data['attributes'] as $tax => $term_ids ) {
+                if ( ! empty( $term_ids ) ) {
+                    $attrs_deleted += $this->delete_exclusive_terms( $term_ids, $tax );
+                }
+            }
+        }
+
+        global $wpdb;
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE 'inksoft\_imported\_products\_%'" );
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '\_transient\_inksoft\_cat\_map\_%' OR option_name LIKE '\_transient\_timeout\_inksoft\_cat\_map\_%'" );
+
+        $remaining = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_inksoft_product_id'" );
+
+        wp_send_json_success( array(
+            'categories_deleted'      => $cats_deleted,
+            'tags_deleted'            => $tags_deleted,
+            'attribute_terms_deleted' => $attrs_deleted,
+            'verification'            => array( 'remaining_products' => $remaining ),
         ) );
     }
 }

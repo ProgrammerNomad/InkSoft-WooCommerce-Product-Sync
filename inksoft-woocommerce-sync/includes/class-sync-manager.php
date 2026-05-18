@@ -342,6 +342,11 @@ class InkSoft_Sync_Manager {
                 $logs[] = "[DEBUG] Verification check: " . $e->getMessage();
             }
 
+            // Mark product as InkSoft-synced (single source of truth for both sync paths)
+            update_post_meta( $product_id, '_inksoft_product_id', $p['ID'] );
+            update_post_meta( $product_id, '_inksoft_store_uri', $store_uri );
+            update_post_meta( $product_id, '_inksoft_synced_at', current_time( 'mysql' ) );
+
             // Track imported SKUs per store
             $this->track_imported_product( $store_uri, $sku, $product_id );
 
@@ -363,52 +368,6 @@ class InkSoft_Sync_Manager {
         $list = get_option( $opt, array() );
         $list[ $sku ] = $product_id;
         update_option( $opt, $list );
-    }
-
-    protected function maybe_set_featured_image( $post_id, $image_url, $replace = 1 ) {
-        if ( empty( $image_url ) ) {
-            return false;
-        }
-
-        require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/media.php';
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-
-        $existing = get_post_thumbnail_id( $post_id );
-        if ( $existing && ! $replace ) {
-            return $existing;
-        }
-
-        // Download to temp and sideload
-        $tmp = download_url( $image_url );
-        if ( is_wp_error( $tmp ) ) {
-            error_log( "[InkSoft Sync] Failed to download image: " . $tmp->get_error_message() . " from URL: " . $image_url );
-            return false;
-        }
-
-        // Get original filename without query params for proper MIME detection
-        $parsed_url = parse_url( $image_url );
-        $path = $parsed_url['path'];
-        $filename = basename( $path );
-        
-        $file_array = array();
-        $file_array['name'] = $filename;
-        $file_array['tmp_name'] = $tmp;
-
-        $id = media_handle_sideload( $file_array, $post_id );
-        if ( is_wp_error( $id ) ) {
-            @unlink( $file_array['tmp_name'] );
-            error_log( "[InkSoft Sync] Failed to sideload image: " . $id->get_error_message() . " for post: " . $post_id );
-            return false;
-        }
-
-        // Optionally remove previous
-        if ( $existing && $replace ) {
-            wp_delete_attachment( $existing, true );
-        }
-
-        set_post_thumbnail( $post_id, $id );
-        return $id;
     }
 
     /**
