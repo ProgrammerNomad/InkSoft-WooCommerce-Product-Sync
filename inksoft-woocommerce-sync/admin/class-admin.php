@@ -43,14 +43,19 @@ class InkSoft_Woo_Sync_Admin {
 
     public function settings_page() {
         $settings = get_option( 'inksoft_woo_settings', array(
-            'api_key' => '',
-            'stores' => '',
-            'markup' => '0',
-            'page_size' => 100,
-            'enable_variants' => 1,
-            'delete_missing' => 1,
-            'image_replace' => 1,
+            'api_key'              => '',
+            'stores'               => '',
+            'markup'               => '0',
+            'page_size'            => 100,
+            'enable_variants'      => 1,
+            'delete_missing'       => 1,
+            'image_replace'        => 1,
+            'product_display_mode' => 'embed_only',
         ) );
+        // Back-fill default if key missing in saved option
+        if ( empty( $settings['product_display_mode'] ) ) {
+            $settings['product_display_mode'] = 'embed_only';
+        }
         ?>
         <div class="wrap">
             <h1><?php esc_html_e( 'InkSoft → WooCommerce Sync', 'inksoft-woo-sync' ); ?></h1>
@@ -76,6 +81,21 @@ class InkSoft_Woo_Sync_Admin {
                     <tr>
                         <th scope="row"><?php esc_html_e( 'Page Size', 'inksoft-woo-sync' ); ?></th>
                         <td><input name="inksoft_woo_settings[page_size]" type="number" id="page_size" value="<?php echo esc_attr( $settings['page_size'] ); ?>" class="small-text" /></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e( 'Product Display Mode', 'inksoft-woo-sync' ); ?></th>
+                        <td>
+                            <label><input type="radio" name="inksoft_woo_settings[product_display_mode]" value="embed_only" <?php checked( $settings['product_display_mode'], 'embed_only' ); ?> />
+                                <strong><?php esc_html_e( 'InkSoft Designer only', 'inksoft-woo-sync' ); ?></strong> &mdash; <?php esc_html_e( 'Replaces the WooCommerce product page with the embedded design studio.', 'inksoft-woo-sync' ); ?>
+                            </label><br/><br/>
+                            <label><input type="radio" name="inksoft_woo_settings[product_display_mode]" value="both" <?php checked( $settings['product_display_mode'], 'both' ); ?> />
+                                <strong><?php esc_html_e( 'Both (embed + WooCommerce)', 'inksoft-woo-sync' ); ?></strong> &mdash; <?php esc_html_e( 'Shows the InkSoft designer above the standard WooCommerce product details, tabs, and related products.', 'inksoft-woo-sync' ); ?>
+                            </label><br/><br/>
+                            <label><input type="radio" name="inksoft_woo_settings[product_display_mode]" value="woo_only" <?php checked( $settings['product_display_mode'], 'woo_only' ); ?> />
+                                <strong><?php esc_html_e( 'WooCommerce only', 'inksoft-woo-sync' ); ?></strong> &mdash; <?php esc_html_e( 'Shows the standard WooCommerce product page. The InkSoft embed is hidden for all products.', 'inksoft-woo-sync' ); ?>
+                            </label>
+                            <p class="description" style="margin-top:8px;"><?php esc_html_e( 'Per-product override: open any product in WooCommerce admin and check &ldquo;Disable InkSoft Designer&rdquo; to force WooCommerce-only for that product regardless of this setting.', 'inksoft-woo-sync' ); ?></p>
+                        </td>
                     </tr>
                     <tr>
                         <th scope="row"><?php esc_html_e( 'Options', 'inksoft-woo-sync' ); ?></th>
