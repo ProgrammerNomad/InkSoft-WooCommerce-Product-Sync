@@ -4,15 +4,15 @@ Automatically sync products from multiple InkSoft stores to WooCommerce with cat
 
 ## Features
 
-✅ **Multi-store support** — Sync products from multiple InkSoft stores simultaneously  
-✅ **Chunked AJAX sync** — Process large catalogs in pages without timing out  
-✅ **Price markup** — Apply configurable percentage markup to InkSoft base prices  
-✅ **Category sync** — Auto-create and link product categories  
-✅ **Image management** — Download and cache images; replace existing images on sync  
-✅ **SKU-based deduplication** — Update existing products by SKU; no duplicates  
-✅ **Missing product deletion** — Automatically delete products that are no longer in InkSoft  
-✅ **Daily cron scheduling** — Automatic daily syncs with manual override  
-✅ **Admin progress logging** — Real-time sync progress displayed in WordPress admin  
+✅ **Multi-store support** - Sync products from multiple InkSoft stores simultaneously  
+✅ **Chunked AJAX sync** - Process large catalogs in pages without timing out  
+✅ **Price markup** - Apply configurable percentage markup to InkSoft base prices  
+✅ **Category sync** - Auto-create and link product categories  
+✅ **Image management** - Download and cache images; replace existing images on sync  
+✅ **SKU-based deduplication** - Update existing products by SKU; no duplicates  
+✅ **Missing product deletion** - Automatically delete products that are no longer in InkSoft  
+✅ **Daily cron scheduling** - Automatic daily syncs with manual override  
+✅ **Admin progress logging** - Real-time sync progress displayed in WordPress admin  
 
 ## Installation
 
@@ -77,9 +77,9 @@ inksoft-woocommerce-sync/
 
 ## API Endpoints Used
 
-- `GetStoreData` — Fetch store metadata
-- `GetProductBaseList` — Paginated product list
-- `GetProductCategories` — Product categories (future)
+- `GetStoreData` - Fetch store metadata
+- `GetProductBaseList` - Paginated product list
+- `GetProductCategories` - Product categories (future)
 
 ## Manual AJAX Sync
 
@@ -97,10 +97,10 @@ inksoft-woocommerce-sync/
 
 ## Troubleshooting
 
-**"WooCommerce is not active"** — Ensure WooCommerce is installed and activated  
-**"No stores configured"** — Add store URIs to plugin settings  
-**"API connection failed"** — Verify API key and store URIs are correct  
-**Timeout during sync** — Use AJAX method (chunked processing) instead of direct cron
+**"WooCommerce is not active"** - Ensure WooCommerce is installed and activated  
+**"No stores configured"** - Add store URIs to plugin settings  
+**"API connection failed"** - Verify API key and store URIs are correct  
+**Timeout during sync** - Use AJAX method (chunked processing) instead of direct cron
 
 ## Future Enhancements
 

@@ -38,8 +38,40 @@ require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-sync-ajax.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'includes/class-product-display.php';
 require_once INKSOFT_WOO_SYNC_PATH . 'admin/class-admin.php';
 
+/**
+ * Create the form submissions table using dbDelta.
+ * Safe to call multiple times - only creates if missing.
+ */
+function inksoft_create_submissions_table() {
+	global $wpdb;
+	$table           = $wpdb->prefix . 'inksoft_form_submissions';
+	$charset_collate = $wpdb->get_charset_collate();
+
+	$sql = "CREATE TABLE IF NOT EXISTS {$table} (
+		id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		product_id bigint(20) unsigned NOT NULL DEFAULT 0,
+		product_name varchar(255) NOT NULL DEFAULT '',
+		contact_name varchar(255) NOT NULL DEFAULT '',
+		contact_email varchar(255) NOT NULL DEFAULT '',
+		contact_phone varchar(100) NOT NULL DEFAULT '',
+		contact_quantity smallint(5) unsigned NOT NULL DEFAULT 0,
+		contact_attrs longtext NOT NULL,
+		contact_message longtext NOT NULL,
+		submitted_at datetime NOT NULL,
+		status varchar(20) NOT NULL DEFAULT 'new',
+		email_sent tinyint(1) NOT NULL DEFAULT 0,
+		PRIMARY KEY (id)
+	) {$charset_collate};";
+
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( $sql );
+}
+
 // Initialize the plugin
 add_action( 'plugins_loaded', function() {
+	// Ensure submissions table exists (covers existing installs after plugin update).
+	inksoft_create_submissions_table();
+
 	// Check if WooCommerce is active
 	if ( ! class_exists( 'WooCommerce' ) ) {
 		add_action( 'admin_notices', function() {
@@ -67,6 +99,7 @@ add_action( 'plugins_loaded', function() {
 // Activation hook
 register_activation_hook( __FILE__, function() {
 	wp_schedule_event( time(), 'daily', 'inksoft_woo_sync_daily' );
+	inksoft_create_submissions_table();
 });
 
 // Deactivation hook

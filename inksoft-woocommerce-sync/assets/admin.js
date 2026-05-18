@@ -110,7 +110,7 @@
     });
 
     // =========================================================================
-    // Danger Zone — Purge synced products
+    // Danger Zone - Purge synced products
     // =========================================================================
 
     function purgeLog(msg) {
@@ -224,7 +224,7 @@
             // ------------------------------------------------------------------
             function deleteBatch(idx) {
                 if (!delProducts || idx >= batches.length) {
-                    // All batches done (or skipping product deletion) — run cleanup
+                    // All batches done (or skipping product deletion) - run cleanup
                     runCleanup(totalDeleted, totalImages);
                     return;
                 }
@@ -246,10 +246,10 @@
                     }
                     var progress = totalDeleted + '/' + total;
                     btn.text('Deleting... (' + progress + ')');
-                    purgeLog('Batch ' + (idx + 1) + '/' + batches.length + ' done — ' + progress + ' products deleted.');
+                    purgeLog('Batch ' + (idx + 1) + '/' + batches.length + ' done - ' + progress + ' products deleted.');
                     setTimeout(function() { deleteBatch(idx + 1); }, 50);
                 }).fail(function() {
-                    purgeLog('Batch ' + (idx + 1) + ' AJAX failed — retrying in 1s...');
+                    purgeLog('Batch ' + (idx + 1) + ' AJAX failed - retrying in 1s...');
                     setTimeout(function() { deleteBatch(idx); }, 1000); // retry same batch
                 });
             }

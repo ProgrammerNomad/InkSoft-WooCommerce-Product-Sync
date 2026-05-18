@@ -61,16 +61,16 @@ class InkSoft_Product_Display {
     public function handle_contact_inquiry() {
         check_ajax_referer( 'inksoft_contact_nonce', 'nonce' );
 
-        $name       = sanitize_text_field( $_POST['contact_name']    ?? '' );
-        $email      = sanitize_email( $_POST['contact_email']        ?? '' );
-        $phone      = sanitize_text_field( $_POST['contact_phone']   ?? '' );
-        $quantity   = absint( $_POST['contact_quantity']             ?? 0 );
+        $name       = sanitize_text_field( $_POST['contact_name']       ?? '' );
+        $email      = sanitize_email( $_POST['contact_email']           ?? '' );
+        $phone      = sanitize_text_field( $_POST['contact_phone']      ?? '' );
+        $quantity   = absint( $_POST['contact_quantity']                ?? 0 );
         $message    = sanitize_textarea_field( $_POST['contact_message'] ?? '' );
-        $product_id = absint( $_POST['product_id']                   ?? 0 );
+        $product_id = absint( $_POST['product_id']                      ?? 0 );
 
         // Attribute selections (size, color, etc.) sent as JSON string.
-        $attrs_raw  = sanitize_text_field( $_POST['contact_attrs'] ?? '' );
-        $attrs      = array();
+        $attrs_raw = sanitize_text_field( $_POST['contact_attrs'] ?? '' );
+        $attrs     = array();
         if ( ! empty( $attrs_raw ) ) {
             $decoded = json_decode( wp_unslash( $attrs_raw ), true );
             if ( is_array( $decoded ) ) {
@@ -82,34 +82,63 @@ class InkSoft_Product_Display {
 
         if ( empty( $name ) || ! is_email( $email ) || empty( $message ) ) {
             wp_send_json_error( array( 'message' => 'Please fill in all required fields.' ) );
+            return;
         }
 
         $product_name = $product_id ? get_the_title( $product_id ) : 'Unknown Product';
-        $admin_email  = get_option( 'admin_email' );
 
-        $attr_lines = '';
+        // ── Save to database first ──────────────────────────────────────────────
+        global $wpdb;
+        $table    = $wpdb->prefix . 'inksoft_form_submissions';
+        $inserted = $wpdb->insert(
+            $table,
+            array(
+                'product_id'       => $product_id,
+                'product_name'     => $product_name,
+                'contact_name'     => $name,
+                'contact_email'    => $email,
+                'contact_phone'    => $phone,
+                'contact_quantity' => $quantity,
+                'contact_attrs'    => wp_json_encode( $attrs ),
+                'contact_message'  => $message,
+                'submitted_at'     => current_time( 'mysql' ),
+                'status'           => 'new',
+                'email_sent'       => 0,
+            ),
+            array( '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%d' )
+        );
+
+        if ( false === $inserted ) {
+            wp_send_json_error( array( 'message' => 'Sorry, we could not save your inquiry. Please try again.' ) );
+            return;
+        }
+
+        $submission_id = $wpdb->insert_id;
+
+        // ── Try to send email (failure is non-blocking) ─────────────────────────
+        $attr_lines  = '';
         foreach ( $attrs as $label => $value ) {
             if ( ! empty( $value ) ) {
                 $attr_lines .= $label . ': ' . $value . "\n";
             }
         }
 
-        $subject = 'New Inquiry: ' . $product_name;
-        $body    = "Product: {$product_name}\n\n"
-                 . ( $attr_lines ? "--- Product Details ---\n{$attr_lines}\n" : '' )
-                 . "Quantity: {$quantity}\n\n"
-                 . "--- Contact Info ---\n"
-                 . "Name: {$name}\nEmail: {$email}\nPhone: {$phone}\n\n"
-                 . "Message:\n{$message}";
-        $headers = array( 'Reply-To: ' . $name . ' <' . $email . '>' );
+        $admin_email = get_option( 'admin_email' );
+        $subject     = 'New Inquiry: ' . $product_name;
+        $body        = "Product: {$product_name}\n\n"
+                     . ( $attr_lines ? "--- Product Options ---\n{$attr_lines}\n" : '' )
+                     . "Quantity: {$quantity}\n\n"
+                     . "--- Contact Info ---\n"
+                     . "Name: {$name}\nEmail: {$email}\nPhone: {$phone}\n\n"
+                     . "Message:\n{$message}";
+        $headers     = array( 'Reply-To: ' . $name . ' <' . $email . '>' );
 
         $sent = wp_mail( $admin_email, $subject, $body, $headers );
-
         if ( $sent ) {
-            wp_send_json_success( array( 'message' => 'Thank you! We will contact you shortly.' ) );
-        } else {
-            wp_send_json_error( array( 'message' => 'Sorry, there was an error sending your message. Please try again.' ) );
+            $wpdb->update( $table, array( 'email_sent' => 1 ), array( 'id' => $submission_id ) );
         }
+
+        wp_send_json_success( array( 'message' => 'Thank you! Your inquiry has been received. We will contact you shortly.' ) );
     }
 
     public function maybe_show_inksoft_embed() {
@@ -123,7 +152,7 @@ class InkSoft_Product_Display {
         $disable_designer   = get_post_meta( $post->ID, '_disable_inksoft_designer', true );
         $inksoft_store_uri  = get_post_meta( $post->ID, '_inksoft_store_uri', true );
 
-        // Not an InkSoft synced product — leave WooCommerce alone.
+        // Not an InkSoft synced product - leave WooCommerce alone.
         if ( empty( $inksoft_product_id ) ) {
             return;
         }
@@ -170,7 +199,7 @@ class InkSoft_Product_Display {
         }
 
         if ( $mode === 'embed_only' ) {
-            // Layer 1: PHP hook removal — works for classic WooCommerce templates.
+            // Layer 1: PHP hook removal - works for classic WooCommerce templates.
             add_action( 'woocommerce_single_product_summary', function() {
                 remove_action( 'woocommerce_single_product_summary', 'woocommerce_template_single_add_to_cart', 30 );
                 remove_action( 'woocommerce_single_product_summary', 'woocommerce_template_single_meta', 40 );
@@ -195,7 +224,7 @@ class InkSoft_Product_Display {
 
             add_action( 'wp_head', function() {
                 echo '<style id="inksoft-embed-only-css">
-/* InkSoft: embed-only mode — show only the embed, hide all WooCommerce product content */
+/* InkSoft: embed-only mode - show only the embed, hide all WooCommerce product content */
 
 /* Block themes (FSE / Twenty Twenty-Five): embed is injected before <main> by the hook,
    so hiding <main> removes all WC product blocks while keeping the embed visible. */
@@ -242,7 +271,7 @@ body.inksoft-embed-only .embed-container {
 
     public function render_contact_mode_css() {
         echo '<style id="inksoft-contact-mode-css">
-/* InkSoft: contact-mode — hide Add to Cart only, keep all product content visible */
+/* InkSoft: contact-mode - hide Add to Cart only, keep all product content visible */
 body.inksoft-contact-mode .cart,
 body.inksoft-contact-mode form.cart,
 body.inksoft-contact-mode .woocommerce-variation-add-to-cart,
@@ -251,55 +280,143 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
     display: none !important;
 }
 
-/* Modal overlay */
+/* ── Quote button on product page ── */
+.inksoft-quote-btn {
+    background-color: #1a1a1a !important;
+    color: #fff !important;
+    padding: 13px 20px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    width: 100% !important;
+    border: none !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    margin-top: 10px !important;
+    display: block !important;
+    letter-spacing: 0.3px !important;
+    text-align: center !important;
+    transition: background-color .15s !important;
+}
+.inksoft-quote-btn:hover {
+    background-color: #333 !important;
+    color: #fff !important;
+}
+
+/* ── Modal overlay ── */
 #inksoft-quote-modal {
     display: none;
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,.55);
     z-index: 99999;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    padding: 16px;
+    padding: 32px 16px;
     box-sizing: border-box;
+    overflow-y: auto;
 }
-#inksoft-quote-modal.is-open {
-    display: flex;
-}
+#inksoft-quote-modal.is-open { display: flex; }
+
+/* ── Modal box ── */
 #inksoft-quote-modal .iq-box {
     background: #fff;
-    border-radius: 8px;
+    border-radius: 10px;
     width: 100%;
-    max-width: 520px;
-    max-height: 90vh;
-    overflow-y: auto;
-    padding: 28px 32px 24px;
+    max-width: 540px;
     box-sizing: border-box;
     position: relative;
-    box-shadow: 0 8px 40px rgba(0,0,0,.25);
+    box-shadow: 0 12px 48px rgba(0,0,0,.22);
+    overflow: hidden;
+    margin: auto;
 }
+
+/* Close button */
 #inksoft-quote-modal .iq-close {
     position: absolute;
-    top: 12px;
+    top: 14px;
     right: 16px;
     background: none;
     border: none;
     font-size: 22px;
     line-height: 1;
     cursor: pointer;
-    color: #555;
-    padding: 4px 8px;
+    color: #888;
+    padding: 4px 6px;
+    z-index: 2;
+    border-radius: 4px;
 }
-#inksoft-quote-modal .iq-close:hover { color: #000; }
-#inksoft-quote-modal h3 {
-    margin: 0 0 6px;
+#inksoft-quote-modal .iq-close:hover { color: #000; background: #f0f0f0; }
+
+/* Header */
+#inksoft-quote-modal .iq-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid #eee;
+}
+#inksoft-quote-modal .iq-header h3 {
+    margin: 0;
     font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+    padding-right: 36px;
+    color: #111;
 }
-#inksoft-quote-modal .iq-product-name {
-    color: #555;
-    margin: 0 0 18px;
-    font-size: 14px;
+
+/* Product details (read-only auto-filled section) */
+#inksoft-quote-modal .iq-product-info {
+    padding: 14px 24px;
+    background: #f7f7f7;
+    border-bottom: 1px solid #eee;
 }
+#inksoft-quote-modal .iq-product-info-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #999;
+    margin-bottom: 6px;
+}
+#inksoft-quote-modal .iq-product-name-display {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111;
+    margin-bottom: 6px;
+    line-height: 1.3;
+}
+#inksoft-quote-modal .iq-product-meta {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+#inksoft-quote-modal .iq-product-meta-item {
+    font-size: 13px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+#inksoft-quote-modal .iq-product-meta-item .iq-meta-val {
+    font-weight: 600;
+    color: #222;
+}
+
+/* Form body */
+#inksoft-quote-modal .iq-form-body {
+    padding: 20px 24px 4px;
+}
+
+/* Section labels */
+#inksoft-quote-modal .iq-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #999;
+    margin: 0 0 12px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid #eee;
+}
+
+/* Form fields */
 #inksoft-quote-modal .iq-field {
     margin-bottom: 14px;
 }
@@ -308,52 +425,82 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
     font-weight: 600;
     font-size: 13px;
     margin-bottom: 5px;
+    color: #333;
+}
+#inksoft-quote-modal .iq-field label .iq-optional {
+    font-weight: 400;
+    font-size: 12px;
+    color: #aaa;
+    margin-left: 4px;
 }
 #inksoft-quote-modal .iq-field input,
 #inksoft-quote-modal .iq-field select,
 #inksoft-quote-modal .iq-field textarea {
     width: 100%;
-    padding: 9px 11px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    padding: 10px 12px;
+    border: 1.5px solid #ddd;
+    border-radius: 6px;
     box-sizing: border-box;
     font-size: 14px;
     font-family: inherit;
+    color: #111;
+    background: #fff;
+    transition: border-color .15s;
+    margin: 0;
 }
-#inksoft-quote-modal .iq-field textarea { resize: vertical; }
+#inksoft-quote-modal .iq-field input:focus,
+#inksoft-quote-modal .iq-field select:focus,
+#inksoft-quote-modal .iq-field textarea:focus {
+    border-color: #1a1a1a;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(26,26,26,.08);
+}
+#inksoft-quote-modal .iq-field textarea { resize: vertical; min-height: 90px; }
+
+/* Two-column grid */
 #inksoft-quote-modal .iq-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
-#inksoft-quote-modal .iq-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 18px;
-}
-#inksoft-quote-modal .iq-submit {
-    background: #333;
-    color: #fff;
-    border: none;
-    padding: 11px 28px;
-    border-radius: 4px;
-    font-size: 15px;
-    cursor: pointer;
-    font-family: inherit;
-}
-#inksoft-quote-modal .iq-submit:hover { background: #000; }
-#inksoft-quote-modal .iq-spinner { color: #555; font-size: 13px; display: none; }
+
+/* Response message */
 #inksoft-quote-modal .iq-response {
     display: none;
     padding: 11px 14px;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 14px;
-    margin-top: 14px;
+    margin: 0 24px 12px;
 }
-.inksoft-quote-btn {
-    margin-top: 8px;
-    width: 100%;
+
+/* Footer with submit */
+#inksoft-quote-modal .iq-footer {
+    padding: 16px 24px 22px;
+    border-top: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+#inksoft-quote-modal .iq-submit {
+    background: #1a1a1a;
+    color: #fff;
+    border: none;
+    padding: 13px 0;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    flex: 1;
+    letter-spacing: 0.3px;
+    transition: background .15s;
+}
+#inksoft-quote-modal .iq-submit:hover { background: #333; }
+#inksoft-quote-modal .iq-spinner {
+    color: #888;
+    font-size: 13px;
+    display: none;
+    white-space: nowrap;
 }
 </style>' . "\n";
     }
@@ -375,8 +522,13 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
         $nonce        = wp_create_nonce( 'inksoft_contact_nonce' );
         $ajax_url     = esc_url( admin_url( 'admin-ajax.php' ) );
 
-        // Collect WooCommerce product attributes for dropdowns.
+        // Auto-fill product details (read-only display).
         $product    = wc_get_product( $product_id );
+        $show_price = $product && (float) $product->get_price() > 0;
+        $price_text = $show_price ? wp_strip_all_tags( $product->get_price_html() ) : '';
+        $sku        = $product ? $product->get_sku() : '';
+
+        // Collect WooCommerce product attributes for dropdowns.
         $attr_fields = array();
         if ( $product ) {
             foreach ( $product->get_attributes() as $attr ) {
@@ -393,63 +545,86 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
         }
 
         ?>
-<div id="inksoft-quote-modal" role="dialog" aria-modal="true" aria-label="Request a Quote">
+<div id="inksoft-quote-modal" role="dialog" aria-modal="true" aria-labelledby="iq-title">
     <div class="iq-box">
         <button class="iq-close" id="inksoft-close-quote" aria-label="Close">&times;</button>
-        <h3>Request a Quote / Place an Order</h3>
-        <p class="iq-product-name">Inquiring about: <strong><?php echo esc_html( $product_name ); ?></strong></p>
 
-        <div id="inksoft-quote-response" class="iq-response"></div>
+        <div class="iq-header">
+            <h3 id="iq-title">Request a Quote / Place an Order</h3>
+        </div>
 
-        <form id="inksoft-quote-form" novalidate>
-
-            <?php if ( ! empty( $attr_fields ) ) : ?>
-            <div class="iq-row">
-                <?php foreach ( $attr_fields as $af ) : ?>
-                <div class="iq-field">
-                    <label><?php echo esc_html( $af['label'] ); ?></label>
-                    <select name="attr_<?php echo esc_attr( sanitize_title( $af['label'] ) ); ?>" data-attr-label="<?php echo esc_attr( $af['label'] ); ?>">
-                        <option value="">-- Select --</option>
-                        <?php foreach ( $af['options'] as $opt ) : ?>
-                        <option value="<?php echo esc_attr( $opt ); ?>"><?php echo esc_html( $opt ); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <?php endforeach; ?>
+        <!-- Auto-filled product details - read only -->
+        <div class="iq-product-info">
+            <div class="iq-product-info-label">Product Details</div>
+            <div class="iq-product-name-display"><?php echo esc_html( $product_name ); ?></div>
+            <?php if ( $price_text || $sku ) : ?>
+            <div class="iq-product-meta">
+                <?php if ( $price_text ) : ?>
+                <div class="iq-product-meta-item">Price:&nbsp;<span class="iq-meta-val"><?php echo esc_html( $price_text ); ?></span></div>
+                <?php endif; ?>
+                <?php if ( $sku ) : ?>
+                <div class="iq-product-meta-item">SKU:&nbsp;<span class="iq-meta-val"><?php echo esc_html( $sku ); ?></span></div>
+                <?php endif; ?>
             </div>
             <?php endif; ?>
+        </div>
 
-            <div class="iq-field">
-                <label>Quantity</label>
-                <input type="number" name="contact_quantity" min="1" placeholder="e.g. 50" />
-            </div>
+        <form id="inksoft-quote-form" novalidate>
+            <div class="iq-form-body">
 
-            <div class="iq-row">
-                <div class="iq-field">
-                    <label>Name <span style="color:red;">*</span></label>
-                    <input type="text" name="contact_name" required placeholder="Your name" />
+                <?php if ( ! empty( $attr_fields ) ) : ?>
+                <p class="iq-section-label">Product Options</p>
+                <div class="iq-row">
+                    <?php foreach ( $attr_fields as $af ) : ?>
+                    <div class="iq-field">
+                        <label><?php echo esc_html( $af['label'] ); ?></label>
+                        <select name="attr_<?php echo esc_attr( sanitize_title( $af['label'] ) ); ?>" data-attr-label="<?php echo esc_attr( $af['label'] ); ?>">
+                            <option value="">-- Select --</option>
+                            <?php foreach ( $af['options'] as $opt ) : ?>
+                            <option value="<?php echo esc_attr( $opt ); ?>"><?php echo esc_html( $opt ); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <?php endforeach; ?>
                 </div>
+                <?php endif; ?>
+
                 <div class="iq-field">
-                    <label>Email <span style="color:red;">*</span></label>
-                    <input type="email" name="contact_email" required placeholder="your@email.com" />
+                    <label>Quantity</label>
+                    <input type="number" name="contact_quantity" min="1" placeholder="e.g. 50" />
                 </div>
+
+                <p class="iq-section-label">Your Contact Info</p>
+
+                <div class="iq-row">
+                    <div class="iq-field">
+                        <label>Name <span style="color:#e74c3c;">*</span></label>
+                        <input type="text" name="contact_name" required placeholder="Your name" />
+                    </div>
+                    <div class="iq-field">
+                        <label>Email <span style="color:#e74c3c;">*</span></label>
+                        <input type="email" name="contact_email" required placeholder="your@email.com" />
+                    </div>
+                </div>
+
+                <div class="iq-field">
+                    <label>Phone <span class="iq-optional">(optional)</span></label>
+                    <input type="tel" name="contact_phone" placeholder="" />
+                </div>
+
+                <div class="iq-field">
+                    <label>Message / Requirements <span style="color:#e74c3c;">*</span></label>
+                    <textarea name="contact_message" required rows="4" placeholder="Describe your requirements, artwork details, deadline, etc."></textarea>
+                </div>
+
             </div>
 
-            <div class="iq-field">
-                <label>Phone</label>
-                <input type="tel" name="contact_phone" placeholder="(optional)" />
-            </div>
+            <div id="inksoft-quote-response" class="iq-response"></div>
 
-            <div class="iq-field">
-                <label>Message / Requirements <span style="color:red;">*</span></label>
-                <textarea name="contact_message" required rows="4" placeholder="Describe your requirements, artwork details, deadline, etc."></textarea>
-            </div>
-
-            <div class="iq-actions">
+            <div class="iq-footer">
                 <button type="submit" class="iq-submit">Send Inquiry</button>
                 <span class="iq-spinner" id="inksoft-quote-spinner">Sending&hellip;</span>
             </div>
-
         </form>
     </div>
 </div>
@@ -478,12 +653,10 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
     if (openBtn) openBtn.addEventListener('click', openModal);
     closeBtn.addEventListener('click', closeModal);
 
-    // Close on overlay click (outside the box).
     modal.addEventListener('click', function(e) {
         if (e.target === modal) closeModal();
     });
 
-    // Close on ESC key.
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
     });
@@ -491,7 +664,6 @@ body.inksoft-contact-mode .wp-block-woocommerce-add-to-cart-form {
     form.addEventListener('submit', function(e) {
         e.preventDefault();
 
-        // Collect attribute selects into a JSON object.
         var attrs = {};
         form.querySelectorAll('select[data-attr-label]').forEach(function(sel) {
             var label = sel.getAttribute('data-attr-label');

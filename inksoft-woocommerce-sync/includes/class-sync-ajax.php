@@ -232,12 +232,12 @@ class InkSoft_Sync_AJAX {
         update_post_meta( $product_id_wp, '_stock_status', 'instock' );
         update_post_meta( $product_id_wp, '_stock', 999 );
 
-        // Categories — single source of truth via shared method
+        // Categories - single source of truth via shared method
         $cat_map_result = $manager->get_category_map_cached( $api, $store, $logs );
         $cat_map        = $cat_map_result['map'] ?? array();
         $manager->assign_product_categories( $product_id_wp, $product_id, $cat_map, $logs );
 
-        // Images — single source of truth via shared method
+        // Images - single source of truth via shared method
         $image_replace = (int) ( $settings['image_replace'] ?? 1 );
         $manager->sync_product_images( $product_id_wp, $product, $image_replace, $logs );
 

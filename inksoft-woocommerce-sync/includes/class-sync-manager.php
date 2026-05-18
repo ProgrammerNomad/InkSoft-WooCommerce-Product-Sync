@@ -311,10 +311,10 @@ class InkSoft_Sync_Manager {
                 $logs[] = "[ERROR] Failed to set manufacturer/supplier: " . $e->getMessage();
             }
 
-            // Categories — single source of truth via shared method
+            // Categories - single source of truth via shared method
             $this->assign_product_categories( $product_id, $p['ID'], $cat_map, $logs );
 
-            // Images — single source of truth via shared method
+            // Images - single source of truth via shared method
             $image_replace = (int) ( $settings['image_replace'] ?? ( get_option( 'inksoft_woo_settings' )['image_replace'] ?? 1 ) );
             $this->sync_product_images( $product_id, $p, $image_replace, $logs );
 
@@ -645,7 +645,7 @@ class InkSoft_Sync_Manager {
                 $insert_args = $parent_term_id > 0 ? array( 'parent' => $parent_term_id ) : array();
                 $result      = wp_insert_term( $cat_name, 'product_cat', $insert_args );
                 if ( is_wp_error( $result ) ) {
-                    $logs[] = "[WARNING] wp_insert_term failed for '{$cat_name}': " . $result->get_error_message() . " — trying fallback lookup";
+                    $logs[] = "[WARNING] wp_insert_term failed for '{$cat_name}': " . $result->get_error_message() . " - trying fallback lookup";
                     $fallback = term_exists( $cat_name, 'product_cat' );
                     if ( $fallback ) {
                         $term_id    = (int) ( is_array( $fallback ) ? $fallback['term_id'] : $fallback );
