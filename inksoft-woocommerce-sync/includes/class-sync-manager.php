@@ -145,11 +145,6 @@ class InkSoft_Sync_Manager {
         $logs[] = "[DEBUG] process_chunk started - store={$store_uri}, page={$page}, page_size={$page_size}";
 
         $api_key = $settings['api_key'] ?? ( get_option( 'inksoft_woo_settings' )['api_key'] ?? '' );
-        if ( empty( $api_key ) ) {
-            $logs[] = "[ERROR] API key not set";
-            return array( 'success' => false, 'error' => 'API key not set', 'logs' => $logs );
-        }
-        $logs[] = "[DEBUG] API key found";
 
         $base = rtrim( 'https://stores.inksoft.com/' . trim( $store_uri ), '/' );
         $logs[] = "[DEBUG] API base URL: {$base}";
@@ -241,13 +236,7 @@ class InkSoft_Sync_Manager {
                 $logs[] = '[WARNING] No price found in API for product ' . ( $p['ID'] ?? '?' ) . ' — set to $0. Configure Default Price in InkSoft Sync settings.';
             }
 
-            // Apply markup
-            $markup = floatval( $settings['markup'] ?? ( get_option( 'inksoft_woo_settings' )['markup'] ?? 0 ) );
-            if ( $price > 0 ) {
-                $price = $price * ( 1 + ( $markup / 100 ) );
-            }
-            
-            $logs[] = "[DEBUG] Price: {$price} (source: {$price_source}, markup: {$markup}%)";
+            $logs[] = "[DEBUG] Price: {$price} (source: {$price_source})";
 
             // Get description (long description or fallback)
             $description = $p['LongDescription'] ?? $p['Description'] ?? '';
@@ -542,9 +531,6 @@ class InkSoft_Sync_Manager {
 
         // Get current products from InkSoft for this store
         $api_key = get_option( 'inksoft_woo_settings' )['api_key'] ?? '';
-        if ( empty( $api_key ) ) {
-            return;
-        }
 
         $base = rtrim( 'https://stores.inksoft.com/' . trim( $store_uri ), '/' );
         $api = new INKSOFT_API( $api_key, $base );

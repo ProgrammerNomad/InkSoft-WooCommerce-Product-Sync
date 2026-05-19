@@ -79,10 +79,6 @@ class InkSoft_Sync_AJAX {
 
         $settings = get_option( 'inksoft_woo_settings', array() );
         $api_key = $settings['api_key'] ?? '';
-        
-        if ( empty( $api_key ) ) {
-            wp_send_json_error( 'API key not configured' );
-        }
 
         $base = rtrim( 'https://stores.inksoft.com/' . trim( $store ), '/' );
         require_once dirname( __FILE__ ) . '/class-inksoft-api.php';
@@ -153,10 +149,6 @@ class InkSoft_Sync_AJAX {
 
         $settings = get_option( 'inksoft_woo_settings', array() );
         $api_key = $settings['api_key'] ?? '';
-        
-        if ( empty( $api_key ) ) {
-            wp_send_json_error( 'API key not configured' );
-        }
 
         $base = rtrim( 'https://stores.inksoft.com/' . trim( $store ), '/' );
         require_once dirname( __FILE__ ) . '/class-inksoft-api.php';
@@ -192,8 +184,8 @@ class InkSoft_Sync_AJAX {
         $sku = $product['Sku'] ?? $product['SKU'] ?? ( 'inksoft-' . $product_id );
         $existing_id = wc_get_product_id_by_sku( $sku );
 
-        // base_price may be passed from JS (extracted from GetProductBaseList), since
-        // GetProduct always returns null pricing fields for this InkSoft store.
+        // base_price may be passed from JS (extracted from GetProductBaseList) as a fallback.
+        // GetProduct now returns UnitPrice with IncludeCosts=true and IncludeStorePurchaseOptionOverrides=true.
         $base_price_passed = floatval( $_POST['base_price'] ?? 0 );
         $default_price     = floatval( $settings['default_price'] ?? 0 );
 
@@ -218,11 +210,6 @@ class InkSoft_Sync_AJAX {
 
         if ( $price == 0 ) {
             $logs[] = '[WARNING] No price found in API — set to $0. Update manually in WooCommerce or configure Default Price in InkSoft Sync settings.';
-        }
-
-        $markup = floatval( $settings['markup'] ?? 0 );
-        if ( $price > 0 ) {
-            $price = $price * ( 1 + ( $markup / 100 ) );
         }
 
         $description = $product['LongDescription'] ?? $product['Description'] ?? '';

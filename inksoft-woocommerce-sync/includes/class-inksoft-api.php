@@ -145,10 +145,14 @@ class INKSOFT_API {
      */
     public function get_product_detail($product_id) {
         $result = $this->request('GetProduct', array(
-            'ProductId' => $product_id,
-            'IncludePricing' => 1,
-            'IncludeQuantityPacks' => 1,
-            'IncludeCategories' => 1,
+            'ProductId'                          => $product_id,
+            'IncludeAllPublisher'                => 'true',
+            'IncludeCategories'                  => 'true',
+            'IncludeCosts'                       => 'true',
+            'IncludePricing'                     => 'true',
+            'IncludeQuantityPacks'               => 'true',
+            'IncludeStorePurchaseOptionOverrides' => 'true',
+            'TierUniqueId'                       => '',
         ));
         
         if (!$result['success']) {
