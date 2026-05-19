@@ -104,10 +104,28 @@ class InkSoft_Sync_AJAX {
             $total_results = $pagination['TotalResults'] ?? count( $products );
 
             foreach ( $products as $p ) {
+                // Extract price from GetProductBaseList (Styles[].Price).
+                // This is the only reliable price source for this InkSoft store.
+                $list_price = 0;
+                if ( ! empty( $p['Styles'] ) && is_array( $p['Styles'] ) ) {
+                    foreach ( $p['Styles'] as $style ) {
+                        if ( ! empty( $style['Price'] ) ) {
+                            $list_price = floatval( $style['Price'] );
+                            break;
+                        }
+                    }
+                }
+                if ( $list_price == 0 && ! empty( $p['UnitPrice'] ) ) {
+                    $list_price = floatval( $p['UnitPrice'] );
+                }
+                if ( $list_price == 0 && ! empty( $p['UnitCost'] ) ) {
+                    $list_price = floatval( $p['UnitCost'] );
+                }
                 $all_products[] = array(
-                    'id' => $p['ID'],
-                    'name' => $p['Name'] ?? 'Product ' . $p['ID'],
-                    'sku' => $p['Sku'] ?? $p['SKU'] ?? 'inksoft-' . $p['ID']
+                    'id'    => $p['ID'],
+                    'name'  => $p['Name'] ?? 'Product ' . $p['ID'],
+                    'sku'   => $p['Sku'] ?? $p['SKU'] ?? 'inksoft-' . $p['ID'],
+                    'price' => $list_price,
                 );
             }
 
@@ -174,6 +192,10 @@ class InkSoft_Sync_AJAX {
         $sku = $product['Sku'] ?? $product['SKU'] ?? ( 'inksoft-' . $product_id );
         $existing_id = wc_get_product_id_by_sku( $sku );
 
+        // base_price may be passed from JS (extracted from GetProductBaseList), since
+        // GetProduct always returns null pricing fields for this InkSoft store.
+        $base_price_passed = floatval( $_POST['base_price'] ?? 0 );
+
         $price = 0;
         if ( ! empty( $product['Styles'][0]['Price'] ) ) {
             $price = floatval( $product['Styles'][0]['Price'] );
@@ -181,6 +203,8 @@ class InkSoft_Sync_AJAX {
             $price = floatval( $product['UnitPrice'] );
         } elseif ( ! empty( $product['UnitCost'] ) ) {
             $price = floatval( $product['UnitCost'] );
+        } elseif ( $base_price_passed > 0 ) {
+            $price = $base_price_passed;
         }
 
         $markup = floatval( $settings['markup'] ?? 0 );

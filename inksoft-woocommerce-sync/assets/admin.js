@@ -105,7 +105,8 @@
                     action: 'inksoft_woo_sync_single_product',
                     nonce: InkSoftWoo.nonce,
                     store: store,
-                    product_id: product.id
+                    product_id: product.id,
+                    base_price: product.price || 0
                 }, function(resp){
                     if (resp.success){
                         // Only show WARNING/ERROR lines from server; skip noisy [DEBUG] output.

@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'INKSOFT_WOO_SYNC_VERSION', '1.2.0' );
+define( 'INKSOFT_WOO_SYNC_VERSION', '1.3.0' );
 define( 'INKSOFT_WOO_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'INKSOFT_WOO_SYNC_URL', plugin_dir_url( __FILE__ ) );
 

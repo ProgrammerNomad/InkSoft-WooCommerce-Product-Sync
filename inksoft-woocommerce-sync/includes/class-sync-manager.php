@@ -178,6 +178,24 @@ class InkSoft_Sync_Manager {
         foreach ( $products as $p ) {
             $logs[] = "[DEBUG] Processing product ID: " . $p['ID'];
 
+            // Save price from GetProductBaseList BEFORE calling get_product_detail,
+            // because GetProduct always returns null pricing for this store.
+            $base_price_from_list = 0;
+            if ( ! empty( $p['Styles'] ) && is_array( $p['Styles'] ) ) {
+                foreach ( $p['Styles'] as $style ) {
+                    if ( ! empty( $style['Price'] ) ) {
+                        $base_price_from_list = floatval( $style['Price'] );
+                        break;
+                    }
+                }
+            }
+            if ( $base_price_from_list == 0 && ! empty( $p['UnitPrice'] ) ) {
+                $base_price_from_list = floatval( $p['UnitPrice'] );
+            }
+            if ( $base_price_from_list == 0 && ! empty( $p['UnitCost'] ) ) {
+                $base_price_from_list = floatval( $p['UnitCost'] );
+            }
+
             // Get detailed product info including pricing and sizes
             $logs[] = "[DEBUG] Fetching detailed product data for ID: " . $p['ID'];
             $detail_result = $api->get_product_detail( $p['ID'] );
@@ -194,19 +212,23 @@ class InkSoft_Sync_Manager {
             
             $existing_id = wc_get_product_id_by_sku( $sku );
 
-            // Get price: try Styles[0].Price first, then UnitPrice, then UnitCost, default to 0
+            // Get price: GetProduct fields are always null for this store, so fall back to
+            // the price saved from GetProductBaseList (Styles[].Price) above.
             $price = 0;
             $price_source = 'default';
             
             if ( ! empty( $p['Styles'][0]['Price'] ) ) {
                 $price = floatval( $p['Styles'][0]['Price'] );
-                $price_source = 'Styles[0].Price';
+                $price_source = 'Styles[0].Price (GetProduct)';
             } elseif ( ! empty( $p['UnitPrice'] ) ) {
                 $price = floatval( $p['UnitPrice'] );
-                $price_source = 'UnitPrice';
+                $price_source = 'UnitPrice (GetProduct)';
             } elseif ( ! empty( $p['UnitCost'] ) ) {
                 $price = floatval( $p['UnitCost'] );
-                $price_source = 'UnitCost';
+                $price_source = 'UnitCost (GetProduct)';
+            } elseif ( $base_price_from_list > 0 ) {
+                $price = $base_price_from_list;
+                $price_source = 'Styles[].Price (GetProductBaseList)';
             }
 
             // Apply markup
