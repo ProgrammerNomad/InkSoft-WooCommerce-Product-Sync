@@ -164,11 +164,11 @@ class InkSoft_Sync_AJAX {
         $logs[] = "Processing: " . ( $product['Name'] ?? 'Unknown' );
 
         // Diagnostic: log top-level product fields so we can identify where category data lives.
-        $logs[] = '[WARNING] DIAG - Product detail keys: ' . implode( ', ', array_keys( (array) $product ) );
+        $logs[] = '[DEBUG] Product detail keys: ' . implode( ', ', array_keys( (array) $product ) );
         if ( isset( $product['Categories'] ) ) {
-            $logs[] = '[WARNING] DIAG - Categories raw: ' . wp_json_encode( $product['Categories'] );
+            $logs[] = '[DEBUG] Categories raw: ' . wp_json_encode( $product['Categories'] );
         } else {
-            $logs[] = '[WARNING] DIAG - No Categories key in product detail response';
+            $logs[] = '[DEBUG] No Categories key in product detail response';
         }
 
         $sku = $product['Sku'] ?? $product['SKU'] ?? ( 'inksoft-' . $product_id );
@@ -245,11 +245,15 @@ class InkSoft_Sync_AJAX {
         $cat_map        = $cat_map_result['map'] ?? array();
         $manager->assign_product_categories( $product_id_wp, $product_id, $cat_map, $logs );
 
-        // Categories — fallback path: use the Categories array embedded in the product detail
-        // response (available because we pass IncludeCategories=1 to GetProduct).
-        // This fires even if the map succeeded, so both sources are additive.
+        // Categories — fallback 1: product detail Categories field (currently always null in this store).
         if ( ! empty( $product['Categories'] ) && is_array( $product['Categories'] ) ) {
             $manager->assign_categories_from_product_detail( $product_id_wp, $product['Categories'], $logs );
+        }
+
+        // Categories — fallback 2: infer from product name when the map has no entry.
+        // This covers the ~90% of products the InkSoft API leaves uncategorised.
+        if ( empty( $cat_map[ (int) $product_id ] ) ) {
+            $manager->assign_category_from_name( $product_id_wp, $product['Name'] ?? '', $logs );
         }
 
         // Images - single source of truth via shared method

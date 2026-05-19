@@ -589,9 +589,9 @@ class InkSoft_Sync_Manager {
         // being synced — this identifies whether there is an ID-type mismatch.
         if ( ! empty( $map ) ) {
             $sample = array_slice( array_keys( $map ), 0, 10 );
-            $logs[] = '[WARNING] DIAG - Category map sample product IDs: ' . implode( ', ', $sample );
+            $logs[] = '[DEBUG] Category map sample product IDs: ' . implode( ', ', $sample );
         } else {
-            $logs[] = '[WARNING] DIAG - Category map is EMPTY — check GetProductCategories API response';
+            $logs[] = '[DEBUG] Category map is EMPTY — check GetProductCategories API response';
         }
 
         // Cache for 1 hour
@@ -730,6 +730,91 @@ class InkSoft_Sync_Manager {
             } else {
                 $logs[] = "[DEBUG] Assigned " . count( array_unique( $term_ids ) ) . " category term(s) from product detail";
             }
+        }
+    }
+
+    /**
+     * Infer a WooCommerce product category from the product name using keyword matching.
+     * Used as a final fallback when the InkSoft API returns no category data.
+     */
+    public function assign_category_from_name( $product_id_wp, $product_name, &$logs ) {
+        if ( empty( $product_name ) ) {
+            return;
+        }
+
+        // Ordered most-specific (multi-word) first to avoid early short-token matches.
+        $rules = array(
+            '/hooded\s+sweatshirt/i'        => 'Hoodies',
+            '/zip.?up\s+hoodie/i'           => 'Hoodies',
+            '/pullover\s+hood/i'            => 'Hoodies',
+            '/full.?zip/i'                  => 'Jackets',
+            '/long.?sleeve/i'               => 'Long Sleeve',
+            '/tank.?top/i'                  => 'Tank Tops',
+            '/polo\s+shirt/i'               => 'Polo Shirts',
+            '/\bt-?shirt\b/i'               => 'T-Shirts',
+            '/\btshirt\b/i'                 => 'T-Shirts',
+            '/\btee\b/i'                    => 'T-Shirts',
+            '/\bhoodie\b/i'                 => 'Hoodies',
+            '/\bsweatshirt\b/i'             => 'Sweatshirts',
+            '/\bcrewneck\b/i'               => 'Sweatshirts',
+            '/\bfleece\b/i'                 => 'Fleece',
+            '/\bpullover\b/i'               => 'Sweatshirts',
+            '/\bjacket\b/i'                 => 'Jackets',
+            '/\bwindbreaker\b/i'            => 'Jackets',
+            '/\bouterwear\b/i'              => 'Outerwear',
+            '/\bvest\b/i'                   => 'Vests',
+            '/\bpants\b|\bjogger\b|\bchino\b/i' => 'Pants',
+            '/\btrucker\b/i'                => 'Hats',
+            '/\bbeanie\b/i'                 => 'Hats',
+            '/\bcap\b/i'                    => 'Hats',
+            '/\bhat\b/i'                    => 'Hats',
+            '/\bpolo\b/i'                   => 'Polo Shirts',
+            '/\bduff?el\b/i'                => 'Bags',
+            '/\bbackpack\b/i'               => 'Bags',
+            '/\btote\b/i'                   => 'Bags',
+            '/\bbag\b/i'                    => 'Bags',
+            '/\bshorts\b/i'                 => 'Shorts',
+            '/\btank\b/i'                   => 'Tank Tops',
+            '/performance/i'                => 'Performance Wear',
+            '/\bembroider/i'                => 'Embroideries',
+        );
+
+        $cat_name = null;
+        foreach ( $rules as $pattern => $category ) {
+            if ( preg_match( $pattern, $product_name ) ) {
+                $cat_name = $category;
+                break;
+            }
+        }
+
+        if ( ! $cat_name ) {
+            $logs[] = "[DEBUG] No name-based category match for: {$product_name}";
+            return;
+        }
+
+        $term = term_exists( $cat_name, 'product_cat' );
+        if ( ! $term ) {
+            $result = wp_insert_term( $cat_name, 'product_cat' );
+            if ( is_wp_error( $result ) ) {
+                $existing = get_term_by( 'name', $cat_name, 'product_cat' );
+                if ( $existing ) {
+                    $term_id = $existing->term_id;
+                } else {
+                    $logs[] = "[WARNING] Could not create name-inferred category '{$cat_name}': " . $result->get_error_message();
+                    return;
+                }
+            } else {
+                $term_id = (int) $result['term_id'];
+            }
+        } else {
+            $term_id = (int) ( is_array( $term ) ? $term['term_id'] : $term );
+        }
+
+        $set = wp_set_post_terms( $product_id_wp, array( $term_id ), 'product_cat', true );
+        if ( is_wp_error( $set ) ) {
+            $logs[] = "[WARNING] wp_set_post_terms failed for '{$cat_name}': " . $set->get_error_message();
+        } else {
+            $logs[] = "[DEBUG] Name-inferred category '{$cat_name}' assigned from: {$product_name}";
         }
     }
 
