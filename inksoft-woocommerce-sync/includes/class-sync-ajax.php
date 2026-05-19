@@ -164,11 +164,11 @@ class InkSoft_Sync_AJAX {
         $logs[] = "Processing: " . ( $product['Name'] ?? 'Unknown' );
 
         // Diagnostic: log top-level product fields so we can identify where category data lives.
-        $logs[] = '[DEBUG] Product detail keys: ' . implode( ', ', array_keys( (array) $product ) );
+        $logs[] = '[WARNING] DIAG - Product detail keys: ' . implode( ', ', array_keys( (array) $product ) );
         if ( isset( $product['Categories'] ) ) {
-            $logs[] = '[DEBUG] Categories raw: ' . wp_json_encode( $product['Categories'] );
+            $logs[] = '[WARNING] DIAG - Categories raw: ' . wp_json_encode( $product['Categories'] );
         } else {
-            $logs[] = '[DEBUG] No Categories key in product detail response';
+            $logs[] = '[WARNING] DIAG - No Categories key in product detail response';
         }
 
         $sku = $product['Sku'] ?? $product['SKU'] ?? ( 'inksoft-' . $product_id );

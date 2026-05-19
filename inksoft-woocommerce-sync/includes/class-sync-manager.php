@@ -589,9 +589,9 @@ class InkSoft_Sync_Manager {
         // being synced — this identifies whether there is an ID-type mismatch.
         if ( ! empty( $map ) ) {
             $sample = array_slice( array_keys( $map ), 0, 10 );
-            $logs[] = '[DEBUG] Category map sample product IDs: ' . implode( ', ', $sample );
+            $logs[] = '[WARNING] DIAG - Category map sample product IDs: ' . implode( ', ', $sample );
         } else {
-            $logs[] = '[DEBUG] Category map is EMPTY — check GetProductCategories API response';
+            $logs[] = '[WARNING] DIAG - Category map is EMPTY — check GetProductCategories API response';
         }
 
         // Cache for 1 hour
