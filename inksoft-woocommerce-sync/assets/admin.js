@@ -1,12 +1,34 @@
 (function($){
+    // Ring-buffer: keeps only the last LOG_MAX lines so the DOM never grows unbounded.
+    var LOG_MAX   = 50;
+    var logBuffer = [];
+
     function log(msg){
-        var $log = $('#inksoft-sync-log');
-        $log.append(msg + "\n");
-        $log.scrollTop($log[0].scrollHeight);
+        logBuffer.push(msg);
+        if (logBuffer.length > LOG_MAX) {
+            logBuffer.splice(0, logBuffer.length - LOG_MAX);
+        }
+        var el = document.getElementById('inksoft-sync-log');
+        if (el) {
+            el.textContent = logBuffer.join('\n');
+            el.scrollTop   = el.scrollHeight;
+        }
+    }
+
+    function setProgress(text) {
+        var el = document.getElementById('inksoft-sync-progress');
+        if (el) {
+            el.style.display = text ? 'block' : 'none';
+            el.textContent   = text;
+        }
     }
 
     $('#inksoft-start-sync').on('click', function(e){
         e.preventDefault();
+        logBuffer = [];
+        var el = document.getElementById('inksoft-sync-log');
+        if (el) { el.textContent = ''; }
+        setProgress('');
         var btn = $(this);
         btn.prop('disabled', true).text('Starting...');
 
@@ -30,6 +52,7 @@
             function processStore(i){
                 if (i >= stores.length){
                     log('All stores processed. Total products: ' + totalProcessed);
+                    setProgress('Sync complete: ' + totalProcessed + ' products synced.');
                     btn.prop('disabled', false).text('Start Sync (AJAX)');
                     return;
                 }
@@ -76,7 +99,7 @@
 
                 var product = products[index];
                 var progress = (index + 1) + '/' + products.length;
-                log('[' + progress + '] Syncing product: ' + product.name + ' (ID: ' + product.id + ')');
+                setProgress('Syncing ' + progress + ': ' + product.name);
 
                 $.post(InkSoftWoo.ajax_url, {
                     action: 'inksoft_woo_sync_single_product',
@@ -85,15 +108,18 @@
                     product_id: product.id
                 }, function(resp){
                     if (resp.success){
-                        var logs = resp.data.logs || [];
-                        logs.forEach(function(l){ log('  ' + l); });
-                        log('[' + progress + '] Success: ' + product.name);
+                        // Only show WARNING/ERROR lines from server; skip noisy [DEBUG] output.
+                        (resp.data.logs || []).forEach(function(l){
+                            if (/\[(WARNING|ERROR)\]/.test(l)) { log('  ' + l); }
+                        });
+                        log('[' + progress + '] \u2713 ' + product.name);
                         totalProcessed++;
                     } else {
-                        log('[' + progress + '] Failed: ' + product.name + ' - ' + (resp.data.message || 'Unknown error'));
-                        if (resp.data.logs){
-                            resp.data.logs.forEach(function(l){ log('  ' + l); });
-                        }
+                        log('[' + progress + '] \u2717 FAILED: ' + product.name + ' \u2014 ' + (resp.data.message || 'Unknown error'));
+                        // Show all non-debug logs for failures so errors are visible.
+                        (resp.data.logs || []).forEach(function(l){
+                            if (l.indexOf('[DEBUG]') === -1) { log('  ' + l); }
+                        });
                     }
                     setTimeout(function(){ processProducts(store, products, index + 1, cb); }, 100);
                 }).fail(function(xhr){

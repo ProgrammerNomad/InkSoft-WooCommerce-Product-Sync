@@ -163,6 +163,14 @@ class InkSoft_Sync_AJAX {
         $product = $detail_result['product'];
         $logs[] = "Processing: " . ( $product['Name'] ?? 'Unknown' );
 
+        // Diagnostic: log top-level product fields so we can identify where category data lives.
+        $logs[] = '[DEBUG] Product detail keys: ' . implode( ', ', array_keys( (array) $product ) );
+        if ( isset( $product['Categories'] ) ) {
+            $logs[] = '[DEBUG] Categories raw: ' . wp_json_encode( $product['Categories'] );
+        } else {
+            $logs[] = '[DEBUG] No Categories key in product detail response';
+        }
+
         $sku = $product['Sku'] ?? $product['SKU'] ?? ( 'inksoft-' . $product_id );
         $existing_id = wc_get_product_id_by_sku( $sku );
 
@@ -232,10 +240,17 @@ class InkSoft_Sync_AJAX {
         update_post_meta( $product_id_wp, '_stock_status', 'instock' );
         update_post_meta( $product_id_wp, '_stock', 999 );
 
-        // Categories - single source of truth via shared method
+        // Categories — primary path: use the store-wide category map.
         $cat_map_result = $manager->get_category_map_cached( $api, $store, $logs );
         $cat_map        = $cat_map_result['map'] ?? array();
         $manager->assign_product_categories( $product_id_wp, $product_id, $cat_map, $logs );
+
+        // Categories — fallback path: use the Categories array embedded in the product detail
+        // response (available because we pass IncludeCategories=1 to GetProduct).
+        // This fires even if the map succeeded, so both sources are additive.
+        if ( ! empty( $product['Categories'] ) && is_array( $product['Categories'] ) ) {
+            $manager->assign_categories_from_product_detail( $product_id_wp, $product['Categories'], $logs );
+        }
 
         // Images - single source of truth via shared method
         $image_replace = (int) ( $settings['image_replace'] ?? 1 );

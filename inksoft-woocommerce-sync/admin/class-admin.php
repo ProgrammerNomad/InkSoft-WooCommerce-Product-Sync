@@ -163,6 +163,7 @@ class InkSoft_Woo_Sync_Admin {
             <hr />
             <h2><?php esc_html_e( 'Manual Sync', 'inksoft-woo-sync' ); ?></h2>
             <p><button id="inksoft-start-sync" class="button button-primary"><?php esc_html_e( 'Start Sync (AJAX)', 'inksoft-woo-sync' ); ?></button></p>
+            <p id="inksoft-sync-progress" style="display:none;font-family:monospace;font-size:13px;color:#555;margin-top:6px;"></p>
 
             <div id="inksoft-sync-log" style="background:#fff;padding:12px;border:1px solid #ddd;max-height:400px;overflow:auto;font-family:monospace;white-space:pre-wrap;"></div>
 

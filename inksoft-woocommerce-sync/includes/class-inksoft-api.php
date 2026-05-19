@@ -100,9 +100,6 @@ class INKSOFT_API {
         return array('success' => true, 'map' => $map);
     }
 
-    /**
-     * Recursively walk the category tree and populate the reverse product->category map
-     */
     private function walk_category_tree(array $cats, $parent_name, array &$map) {
         foreach ($cats as $cat) {
             $name = trim($cat['Name'] ?? '');
@@ -110,7 +107,15 @@ class INKSOFT_API {
                 continue;
             }
 
-            foreach ($cat['ItemIds'] ?? array() as $product_id) {
+            // Accept any of the common field name variants the InkSoft API may use.
+            $item_ids = $cat['ItemIds']
+                     ?? $cat['ItemIDs']
+                     ?? $cat['ProductIds']
+                     ?? $cat['ProductIDs']
+                     ?? $cat['Ids']
+                     ?? array();
+
+            foreach ($item_ids as $product_id) {
                 $product_id = (int) $product_id;
                 if (!isset($map[$product_id])) {
                     $map[$product_id] = array();

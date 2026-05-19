@@ -585,6 +585,15 @@ class InkSoft_Sync_Manager {
         $map = $result['map'];
         $logs[] = "[DEBUG] Category map built: " . count( $map ) . " products have categories";
 
+        // Diagnostic: show first 10 IDs in the map so we can compare them to the product IDs
+        // being synced — this identifies whether there is an ID-type mismatch.
+        if ( ! empty( $map ) ) {
+            $sample = array_slice( array_keys( $map ), 0, 10 );
+            $logs[] = '[DEBUG] Category map sample product IDs: ' . implode( ', ', $sample );
+        } else {
+            $logs[] = '[DEBUG] Category map is EMPTY — check GetProductCategories API response';
+        }
+
         // Cache for 1 hour
         set_transient( $transient_key, $map, HOUR_IN_SECONDS );
 
@@ -673,6 +682,54 @@ class InkSoft_Sync_Manager {
             }
         } else {
             $logs[] = "[WARNING] No valid category terms to assign for InkSoft ID {$inksoft_id}";
+        }
+    }
+
+    /**
+     * Assign categories directly from the product detail response
+     * (fallback when the category map lookup yields no results).
+     * Uses true/append so it never removes categories set by the map method.
+     */
+    public function assign_categories_from_product_detail( $product_id_wp, array $categories, &$logs ) {
+        $logs[] = "[DEBUG] assign_categories_from_product_detail: " . count( $categories ) . " entries";
+        $term_ids = array();
+
+        foreach ( $categories as $cat ) {
+            // Handle various possible field names in the InkSoft response.
+            $cat_name = trim(
+                $cat['Name'] ?? $cat['CategoryName'] ?? $cat['Title'] ?? $cat['Label'] ?? ''
+            );
+            if ( empty( $cat_name ) ) {
+                continue;
+            }
+
+            $term = term_exists( $cat_name, 'product_cat' );
+            if ( ! $term ) {
+                $result = wp_insert_term( $cat_name, 'product_cat' );
+                if ( is_wp_error( $result ) ) {
+                    // Term may already exist under a different parent — try a plain lookup.
+                    $existing = get_term_by( 'name', $cat_name, 'product_cat' );
+                    if ( $existing ) {
+                        $term_ids[] = $existing->term_id;
+                    } else {
+                        $logs[] = "[WARNING] Could not create category '{$cat_name}': " . $result->get_error_message();
+                    }
+                    continue;
+                }
+                $term_ids[] = (int) $result['term_id'];
+                $logs[] = "[DEBUG] Created category '{$cat_name}' (term_id={$result['term_id']})";
+            } else {
+                $term_ids[] = (int) ( is_array( $term ) ? $term['term_id'] : $term );
+            }
+        }
+
+        if ( ! empty( $term_ids ) ) {
+            $set_result = wp_set_post_terms( $product_id_wp, array_unique( $term_ids ), 'product_cat', true );
+            if ( is_wp_error( $set_result ) ) {
+                $logs[] = "[ERROR] wp_set_post_terms (detail) failed: " . $set_result->get_error_message();
+            } else {
+                $logs[] = "[DEBUG] Assigned " . count( array_unique( $term_ids ) ) . " category term(s) from product detail";
+            }
         }
     }
 
