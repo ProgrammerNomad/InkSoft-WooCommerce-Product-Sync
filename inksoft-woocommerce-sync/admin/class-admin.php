@@ -118,6 +118,11 @@ class InkSoft_Woo_Sync_Admin {
                         <p class="description"><?php esc_html_e( 'Example: Devo_Designs,devodesigns', 'inksoft-woo-sync' ); ?></p></td>
                     </tr>
                     <tr>
+                        <th scope="row"><label for="default_price"><?php esc_html_e( 'Default Price ($)', 'inksoft-woo-sync' ); ?></label></th>
+                        <td><input name="inksoft_woo_settings[default_price]" type="number" step="0.01" min="0" id="default_price" value="<?php echo esc_attr( $settings['default_price'] ?? '0' ); ?>" class="small-text" />
+                        <p class="description"><?php esc_html_e( 'Fallback price used when InkSoft API returns no price for a product. The InkSoft API only provides pricing for a small subset of products; all others will use this value (plus markup if set). Set 0 to leave unpriceable products at $0.', 'inksoft-woo-sync' ); ?></p></td>
+                    </tr>
+                    <tr>
                         <th scope="row"><label for="markup"><?php esc_html_e( 'Markup (%)', 'inksoft-woo-sync' ); ?></label></th>
                         <td><input name="inksoft_woo_settings[markup]" type="number" step="0.01" id="markup" value="<?php echo esc_attr( $settings['markup'] ); ?>" class="small-text" />
                         <p class="description"><?php esc_html_e( 'Apply percentage markup to base price when importing.', 'inksoft-woo-sync' ); ?></p></td>

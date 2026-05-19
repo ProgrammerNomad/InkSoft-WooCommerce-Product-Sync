@@ -93,7 +93,7 @@ class InkSoft_Sync_AJAX {
         $page_size = 100;
 
         while ( true ) {
-            $result = $api->request( 'GetProductBaseList', array( 'Page' => $page, 'PageSize' => $page_size ) );
+            $result = $api->request( 'GetProductBaseList', array( 'Page' => $page, 'PageSize' => $page_size, 'IncludePricing' => 1 ) );
             
             if ( ! $result['success'] ) {
                 wp_send_json_error( 'API error: ' . ( $result['error'] ?? 'Unknown' ) );
@@ -195,16 +195,29 @@ class InkSoft_Sync_AJAX {
         // base_price may be passed from JS (extracted from GetProductBaseList), since
         // GetProduct always returns null pricing fields for this InkSoft store.
         $base_price_passed = floatval( $_POST['base_price'] ?? 0 );
+        $default_price     = floatval( $settings['default_price'] ?? 0 );
 
         $price = 0;
+        $price_source = 'none';
         if ( ! empty( $product['Styles'][0]['Price'] ) ) {
             $price = floatval( $product['Styles'][0]['Price'] );
+            $price_source = 'GetProduct.Styles[0].Price';
         } elseif ( ! empty( $product['UnitPrice'] ) ) {
             $price = floatval( $product['UnitPrice'] );
+            $price_source = 'GetProduct.UnitPrice';
         } elseif ( ! empty( $product['UnitCost'] ) ) {
             $price = floatval( $product['UnitCost'] );
+            $price_source = 'GetProduct.UnitCost';
         } elseif ( $base_price_passed > 0 ) {
             $price = $base_price_passed;
+            $price_source = 'GetProductBaseList.Styles[].Price';
+        } elseif ( $default_price > 0 ) {
+            $price = $default_price;
+            $price_source = 'default_price setting';
+        }
+
+        if ( $price == 0 ) {
+            $logs[] = '[WARNING] No price found in API — set to $0. Update manually in WooCommerce or configure Default Price in InkSoft Sync settings.';
         }
 
         $markup = floatval( $settings['markup'] ?? 0 );

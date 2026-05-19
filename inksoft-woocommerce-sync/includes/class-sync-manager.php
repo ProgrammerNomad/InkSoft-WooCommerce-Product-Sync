@@ -229,6 +229,16 @@ class InkSoft_Sync_Manager {
             } elseif ( $base_price_from_list > 0 ) {
                 $price = $base_price_from_list;
                 $price_source = 'Styles[].Price (GetProductBaseList)';
+            } else {
+                $default_price = floatval( $settings['default_price'] ?? ( get_option( 'inksoft_woo_settings' )['default_price'] ?? 0 ) );
+                if ( $default_price > 0 ) {
+                    $price = $default_price;
+                    $price_source = 'default_price setting';
+                }
+            }
+
+            if ( $price == 0 ) {
+                $logs[] = '[WARNING] No price found in API for product ' . ( $p['ID'] ?? '?' ) . ' — set to $0. Configure Default Price in InkSoft Sync settings.';
             }
 
             // Apply markup
